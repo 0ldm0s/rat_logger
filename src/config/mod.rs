@@ -164,6 +164,7 @@ pub struct FileConfig {
     pub min_compress_threads: usize,
     pub skip_server_logs: bool,
     pub is_raw: bool,
+    pub compress_on_drop: bool, // 是否在Drop时强制压缩
 }
 
 impl Default for FileConfig {
@@ -176,6 +177,7 @@ impl Default for FileConfig {
             min_compress_threads: 2,
             skip_server_logs: false,
             is_raw: false,
+            compress_on_drop: false, // 默认不在Drop时压缩
         }
     }
 }

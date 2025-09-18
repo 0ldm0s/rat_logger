@@ -203,7 +203,9 @@ impl LogHandler for FileHandler {
 
 impl Drop for FileHandler {
     fn drop(&mut self) {
-        let _ = self.force_compress();
+        if self.config.compress_on_drop {
+            let _ = self.force_compress();
+        }
     }
 }
 
