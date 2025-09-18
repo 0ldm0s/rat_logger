@@ -43,6 +43,20 @@ impl bincode::Encode for Level {
     }
 }
 
+impl bincode::Decode<()> for Level {
+    fn decode<D: bincode::de::Decoder<Context = ()>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
+        let level_str: String = bincode::Decode::decode(decoder)?;
+        match level_str.as_str() {
+            "ERROR" => Ok(Level::Error),
+            "WARN" => Ok(Level::Warn),
+            "INFO" => Ok(Level::Info),
+            "DEBUG" => Ok(Level::Debug),
+            "TRACE" => Ok(Level::Trace),
+            _ => Err(bincode::error::DecodeError::OtherString("Invalid level string".to_string())),
+        }
+    }
+}
+
 /// 日志级别过滤器
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LevelFilter {
@@ -203,6 +217,24 @@ impl bincode::Encode for NetRecord {
         bincode::Encode::encode(&self.auth_token, encoder)?;
         bincode::Encode::encode(&self.app_id, encoder)?;
         Ok(())
+    }
+}
+
+impl bincode::Decode<()> for NetRecord {
+    fn decode<D: bincode::de::Decoder<Context = ()>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(Self {
+            level: bincode::Decode::decode(decoder)?,
+            target: bincode::Decode::decode(decoder)?,
+            message: bincode::Decode::decode(decoder)?,
+            module_path: bincode::Decode::decode(decoder)?,
+            file: bincode::Decode::decode(decoder)?,
+            line: bincode::Decode::decode(decoder)?,
+            timestamp: bincode::Decode::decode(decoder)?,
+            auth_token: bincode::Decode::decode(decoder)?,
+            app_id: bincode::Decode::decode(decoder)?,
+        })
     }
 }
 

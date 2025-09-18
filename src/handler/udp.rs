@@ -8,7 +8,8 @@ use tokio::net::UdpSocket;
 use tokio::runtime::Runtime;
 
 use crate::handler::{LogHandler, HandlerType};
-use crate::config::{Record, NetworkConfig, NetRecord};
+use crate::config::{Record, NetworkConfig};
+use crate::udp_helper::UdpPacketHelper;
 
 /// UDP连接池
 pub struct UdpConnectionPool {
@@ -106,24 +107,29 @@ impl UdpHandler {
 
     /// 异步发送日志记录
     async fn send_record(&self, record: &Record) {
-        let mut net_record = NetRecord::from(record);
-        net_record.auth_token = Some(self.config.auth_token.clone());
-        net_record.app_id = Some(self.config.app_id.clone());
+        match UdpPacketHelper::encode_record(
+            record,
+            Some(self.config.auth_token.clone()),
+            Some(self.config.app_id.clone())
+        ) {
+            Ok(data) => {
+                let addr = format!("{}:{}", self.config.server_addr, self.config.server_port);
 
-        if let Ok(data) = bincode::encode_to_vec(&net_record, bincode::config::standard()) {
-            let addr = format!("{}:{}", self.config.server_addr, self.config.server_port);
-
-            for attempt in 0..self.retry_count {
-                match self.pool.send_data(&addr, &data).await {
-                    Ok(_) => return,
-                    Err(e) => {
-                        if attempt == self.retry_count - 1 {
-                            eprintln!("UDP send failed after {} attempts: {}", self.retry_count, e);
-                        } else {
-                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                for attempt in 0..self.retry_count {
+                    match self.pool.send_data(&addr, &data).await {
+                        Ok(_) => return,
+                        Err(e) => {
+                            if attempt == self.retry_count - 1 {
+                                eprintln!("UDP send failed after {} attempts: {}", self.retry_count, e);
+                            } else {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                            }
                         }
                     }
                 }
+            }
+            Err(e) => {
+                eprintln!("UDP encode failed: {}", e);
             }
         }
     }
@@ -136,11 +142,10 @@ impl UdpHandler {
             // 如果没有运行时，使用tokio::spawn
             let pool = Arc::clone(&self.pool);
             let addr = format!("{}:{}", self.config.server_addr, self.config.server_port);
-            let mut net_record = NetRecord::from(record);
-            net_record.auth_token = Some(self.config.auth_token.clone());
-            net_record.app_id = Some(self.config.app_id.clone());
+            let auth_token = self.config.auth_token.clone();
+            let app_id = self.config.app_id.clone();
 
-            if let Ok(data) = bincode::encode_to_vec(&net_record, bincode::config::standard()) {
+            if let Ok(data) = UdpPacketHelper::encode_record(record, Some(auth_token), Some(app_id)) {
                 tokio::spawn(async move {
                     for attempt in 0..3 {
                         match pool.send_data(&addr, &data).await {

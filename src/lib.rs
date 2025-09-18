@@ -5,6 +5,7 @@
 pub mod core;
 pub mod handler;
 pub mod config;
+pub mod udp_helper;
 
 use core::LoggerCore;
 use handler::{LogHandler, HandlerType};
