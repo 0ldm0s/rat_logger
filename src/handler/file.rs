@@ -1,11 +1,14 @@
 //! 文件日志处理器
 
-use std::io::{self, Write};
+use std::io::{self, Write, BufWriter};
 use std::any::Any;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use parking_lot::Mutex;
+use std::time::{Duration, Instant};
+use crossbeam_channel::{Sender, Receiver, unbounded};
+use std::thread;
 
 use crate::handler::{LogHandler, HandlerType};
 use crate::config::{Record, FileConfig};
@@ -20,12 +23,29 @@ lazy_static::lazy_static! {
     };
 }
 
+/// 指令枚举 - 生产者消费者模式
+enum FileCommand {
+    /// 写入日志数据
+    Write(Vec<u8>),
+    /// 强制刷新到磁盘
+    Flush,
+    /// 轮转日志文件
+    Rotate,
+    /// 压缩指定文件
+    Compress(PathBuf),
+    /// 停止工作线程
+    Shutdown,
+}
+
 /// 日志文件写入器
 struct LogWriter {
-    current_file: Option<File>,
+    current_file: Option<BufWriter<File>>,
     current_path: PathBuf,
     max_size: usize,
     current_size: usize,
+    last_flush: Instant,
+    flush_interval: Duration,
+    aggressive_sync: bool,
 }
 
 /// 日志轮转器
@@ -37,29 +57,167 @@ struct LogRotator {
 /// 文件日志处理器
 pub struct FileHandler {
     config: FileConfig,
-    writer: Arc<Mutex<LogWriter>>,
-    rotator: LogRotator,
-    rotate_lock: Arc<Mutex<()>>,
+    command_sender: Sender<FileCommand>,
+    writer_thread: Option<thread::JoinHandle<()>>,
     formatter: Box<dyn Fn(&mut dyn Write, &Record) -> io::Result<()> + Send + Sync>,
 }
 
 impl FileHandler {
     /// 创建新的文件处理器
     pub fn new(config: FileConfig) -> Self {
-        let writer = Arc::new(Mutex::new(
-            LogWriter::new(&config.log_dir, config.max_file_size as usize)
-                .unwrap_or_else(|_| {
-                    LogWriter::create_default(&config.log_dir, config.max_file_size as usize)
-                })
-        ));
+        let (command_sender, command_receiver) = unbounded();
+
+        let config_clone = config.clone();
+        let writer_thread = thread::spawn(move || {
+            Self::worker_thread(config_clone, command_receiver);
+        });
 
         Self {
-            config: config.clone(),
-            writer,
-            rotator: LogRotator::new(config.log_dir.clone(), config.max_compressed_files),
-            rotate_lock: Arc::new(Mutex::new(())),
+            config,
+            command_sender,
+            writer_thread: Some(writer_thread),
             formatter: Box::new(default_format),
         }
+    }
+
+    /// 工作线程 - 处理所有文件操作
+    fn worker_thread(config: FileConfig, receiver: Receiver<FileCommand>) {
+        let mut writer = LogWriter::new(&config.log_dir, config.max_file_size as usize)
+            .unwrap_or_else(|_| LogWriter::create_default(&config.log_dir, config.max_file_size as usize));
+
+        let rotator = LogRotator::new(config.log_dir.clone(), config.max_compressed_files);
+        let mut batch_buffer = Vec::with_capacity(64 * 1024); // 64KB批量缓冲区
+        let mut last_flush = Instant::now();
+        let flush_interval = Duration::from_millis(100);
+
+        while let Ok(command) = receiver.recv() {
+            match command {
+                FileCommand::Write(data) => {
+                    batch_buffer.extend_from_slice(&data);
+
+                    // 批量写入条件：达到8KB或100ms间隔
+                    if batch_buffer.len() >= 8192 || last_flush.elapsed() >= flush_interval {
+                        if let Err(e) = writer.write_batch(&batch_buffer) {
+                            eprintln!("批量写入失败: {}", e);
+                        }
+                        batch_buffer.clear();
+                        last_flush = Instant::now();
+                    }
+
+                    // 检查是否需要轮转
+                    if writer.current_size >= writer.max_size {
+                        Self::handle_rotation(&mut writer, &rotator, &config);
+                    }
+                }
+
+                FileCommand::Flush => {
+                    // 写入剩余数据
+                    if !batch_buffer.is_empty() {
+                        if let Err(e) = writer.write_batch(&batch_buffer) {
+                            eprintln!("最终批量写入失败: {}", e);
+                        }
+                        batch_buffer.clear();
+                    }
+
+                    if let Err(e) = writer.sync_all() {
+                        eprintln!("同步失败: {}", e);
+                    }
+                }
+
+                FileCommand::Rotate => {
+                    Self::handle_rotation(&mut writer, &rotator, &config);
+                }
+
+                FileCommand::Compress(path) => {
+                    Self::handle_compression(path, &config);
+                }
+
+                FileCommand::Shutdown => {
+                    // 处理剩余数据并退出
+                    if !batch_buffer.is_empty() {
+                        if let Err(e) = writer.write_batch(&batch_buffer) {
+                            eprintln!("关闭时批量写入失败: {}", e);
+                        }
+                    }
+                    if let Err(e) = writer.sync_all() {
+                        eprintln!("关闭时同步失败: {}", e);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    /// 处理日志轮转
+    fn handle_rotation(writer: &mut LogWriter, rotator: &LogRotator, config: &FileConfig) {
+        let old_path = writer.current_path.clone();
+        if !old_path.as_os_str().is_empty() {
+            // Flush并关闭当前文件
+            if let Some(mut file) = writer.current_file.take() {
+                if let Err(e) = file.flush() {
+                    eprintln!("轮转前刷新失败: {}", e);
+                }
+                drop(file);
+            }
+
+            let new_path = rotator.next_path();
+            let new_file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&new_path)
+                .unwrap_or_else(|_| {
+                    eprintln!("无法创建新日志文件: {}", new_path.display());
+                    OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&new_path)
+                        .expect("无法恢复日志文件创建")
+                });
+
+            writer.current_file = Some(BufWriter::new(new_file));
+            writer.current_path = new_path;
+            writer.current_size = 0;
+
+            // 异步压缩旧文件
+            if old_path.exists() {
+                let log_dir = config.log_dir.clone();
+                let max_compressed_files = config.max_compressed_files;
+                COMPRESSION_POOL.execute(move || {
+                    if let Err(e) = Self::compress_file(&old_path, &log_dir, max_compressed_files) {
+                        eprintln!("压缩失败 {}: {}", old_path.display(), e);
+                    } else {
+                        // 重试删除原文件
+                        for attempt in 0..5 {
+                            match std::fs::remove_file(&old_path) {
+                                Ok(_) => break,
+                                Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                                    let delay = if cfg!(windows) { 200 } else { 100 };
+                                    thread::sleep(Duration::from_millis(delay * (attempt + 1)));
+                                    continue;
+                                }
+                                Err(e) => {
+                                    eprintln!("删除原文件失败 {}: {}", old_path.display(), e);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            rotator.cleanup_old_files();
+        }
+    }
+
+    /// 处理文件压缩
+    fn handle_compression(path: PathBuf, config: &FileConfig) {
+        let log_dir = config.log_dir.clone();
+        let max_compressed_files = config.max_compressed_files;
+        COMPRESSION_POOL.execute(move || {
+            if let Err(e) = Self::compress_file(&path, &log_dir, max_compressed_files) {
+                eprintln!("压缩失败 {}: {}", path.display(), e);
+            }
+        });
     }
 
     /// 设置自定义格式化函数
@@ -73,66 +231,12 @@ impl FileHandler {
 
     /// 强制压缩当前日志文件
     pub fn force_compress(&self) -> io::Result<()> {
-        let mut writer = self.writer.lock();
-        if writer.current_size > 0 {
-            self.rotate(&mut writer)?;
+        // 发送轮转指令到工作线程
+        let command = FileCommand::Rotate;
+        if let Err(e) = self.command_sender.send(command) {
+            eprintln!("发送轮转指令失败: {}", e);
         }
         Ok(())
-    }
-
-    /// 轮转日志文件
-    fn rotate(&self, writer: &mut LogWriter) -> io::Result<()> {
-        let _lock = self.rotate_lock.lock();
-
-        let old_path = writer.current_path.clone();
-        if !old_path.as_os_str().is_empty() {
-            writer.current_path = PathBuf::new();
-            let new_path = self.rotator.next_path();
-
-            let new_file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&new_path)?;
-
-            writer.current_file = Some(new_file);
-            writer.current_path = new_path;
-            writer.current_size = 0;
-
-            drop(_lock);
-            if old_path.exists() {
-                self.compress_async(old_path);
-            }
-
-            self.rotator.cleanup_old_files();
-        }
-        Ok(())
-    }
-
-    /// 异步压缩文件
-    fn compress_async(&self, path: PathBuf) {
-        let max_files = self.config.max_compressed_files;
-        let base_path = self.config.log_dir.clone();
-
-        COMPRESSION_POOL.execute(move || {
-            if let Err(e) = Self::compress_file(&path, &base_path, max_files) {
-                eprintln!("Failed to compress {}: {}", path.display(), e);
-            } else {
-                // 重试删除原文件
-                for _ in 0..3 {
-                    match std::fs::remove_file(&path) {
-                        Ok(_) => break,
-                        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            continue;
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to remove {}: {}", path.display(), e);
-                            break;
-                        }
-                    }
-                }
-            }
-        });
     }
 
     /// 压缩文件
@@ -168,27 +272,22 @@ impl LogHandler for FileHandler {
 
         let mut buf = Vec::new();
         if let Err(e) = (self.formatter)(&mut buf, record) {
-            eprintln!("File format error: {}", e);
+            eprintln!("文件格式化错误: {}", e);
             return;
         }
 
-        let mut writer = self.writer.lock();
-        if let Err(e) = writer.write(&buf) {
-            eprintln!("File write error: {}", e);
-            return;
-        }
-
-        if writer.current_size >= writer.max_size {
-            if let Err(e) = self.rotate(&mut writer) {
-                eprintln!("Log rotate error: {}", e);
-            }
+        // 发送写入指令到工作线程
+        let command = FileCommand::Write(buf);
+        if let Err(e) = self.command_sender.send(command) {
+            eprintln!("发送写入指令失败: {}", e);
         }
     }
 
     fn flush(&self) {
-        let mut writer = self.writer.lock();
-        if let Some(file) = &mut writer.current_file {
-            let _ = file.flush();
+        // 发送刷新指令到工作线程
+        let command = FileCommand::Flush;
+        if let Err(e) = self.command_sender.send(command) {
+            eprintln!("发送刷新指令失败: {}", e);
         }
     }
 
@@ -203,8 +302,12 @@ impl LogHandler for FileHandler {
 
 impl Drop for FileHandler {
     fn drop(&mut self) {
-        if self.config.compress_on_drop {
-            let _ = self.force_compress();
+        // 发送停止指令到工作线程
+        let _ = self.command_sender.send(FileCommand::Shutdown);
+
+        // 等待工作线程结束
+        if let Some(thread) = self.writer_thread.take() {
+            let _ = thread.join();
         }
     }
 }
@@ -222,10 +325,13 @@ impl LogWriter {
             .open(&path)?;
 
         Ok(Self {
-            current_file: Some(file),
+            current_file: Some(BufWriter::new(file)),
             current_path: path,
             max_size,
             current_size: 0,
+            last_flush: Instant::now(),
+            flush_interval: Duration::from_millis(100),
+            aggressive_sync: !cfg!(windows), // Windows默认不使用强同步
         })
     }
 
@@ -245,18 +351,51 @@ impl LogWriter {
             });
 
         Self {
-            current_file: Some(file),
+            current_file: Some(BufWriter::new(file)),
             current_path: path,
             max_size,
             current_size: 0,
+            last_flush: Instant::now(),
+            flush_interval: Duration::from_millis(100),
+            aggressive_sync: !cfg!(windows), // Windows默认不使用强同步
         }
     }
 
-    fn write(&mut self, buf: &[u8]) -> io::Result<()> {
+    /// 批量写入数据
+    fn write_batch(&mut self, data: &[u8]) -> io::Result<()> {
         if let Some(file) = &mut self.current_file {
-            file.write_all(buf)?;
-            self.current_size += buf.len();
-            file.sync_all()?;
+            file.write_all(data)?;
+            self.current_size += data.len();
+
+            // 定期flush到操作系统缓冲区，避免频繁sync到磁盘
+            if self.last_flush.elapsed() >= self.flush_interval {
+                file.flush()?;
+                self.last_flush = Instant::now();
+            }
+        }
+        Ok(())
+    }
+
+    /// 立即刷新并同步到磁盘
+    fn sync_all(&mut self) -> io::Result<()> {
+        if let Some(file) = &mut self.current_file {
+            file.flush()?;
+
+            // 根据配置和平台选择同步策略
+            if self.aggressive_sync {
+                #[cfg(windows)]
+                {
+                    // Windows上使用更轻量的同步方式
+                    file.get_mut().sync_data()?;
+                }
+                #[cfg(not(windows))]
+                {
+                    file.get_mut().sync_all()?;
+                }
+            } else {
+                // 只flush到操作系统缓冲区，让系统决定何时写入磁盘
+                // 这样在Windows上有更好的性能
+            }
         }
         Ok(())
     }

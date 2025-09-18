@@ -590,6 +590,7 @@ dependencies = [
  "bincode",
  "chrono",
  "crossbeam",
+ "crossbeam-channel",
  "dashmap",
  "futures",
  "lazy_static",

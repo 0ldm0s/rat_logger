@@ -155,7 +155,7 @@ impl Serialize for Record {
 }
 
 /// 文件日志配置
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileConfig {
     pub log_dir: PathBuf,
     pub max_file_size: u64,
