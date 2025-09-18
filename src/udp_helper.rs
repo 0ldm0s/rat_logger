@@ -95,11 +95,6 @@ impl PacketMetadata {
         self.app_id.as_deref() == Some(app_id)
     }
 
-    /// 检查数据包级别是否满足要求
-    pub fn level_meets(&self, min_level: Level) -> bool {
-        self.level as u8 >= min_level as u8
-    }
-
     /// 获取数据包的年龄（秒）
     pub fn age_seconds(&self) -> u64 {
         std::time::SystemTime::now()
@@ -213,7 +208,36 @@ mod tests {
         assert_eq!(metadata.app_id, Some("my_app".to_string()));
         assert!(metadata.is_from_app("my_app"));
         assert!(!metadata.is_from_app("other_app"));
-        assert!(metadata.level_meets(Level::Error));
-        assert!(!metadata.level_meets(Level::Trace));
+        assert!(metadata.level.should_log_at_level(Level::Error));  // Error日志在Error级别下应该发送
+        assert!(metadata.level.should_log_at_level(Level::Warn));   // Error日志在Warn级别下应该发送
+        assert!(metadata.level.should_log_at_level(Level::Info));   // Error日志在Info级别下应该发送
+        assert!(metadata.level.should_log_at_level(Level::Debug));  // Error日志在Debug级别下应该发送
+        assert!(metadata.level.should_log_at_level(Level::Trace));  // Error日志在Trace级别下应该发送
+    }
+
+    #[test]
+    fn test_level_filtering() {
+        // 测试Debug级别的日志
+        let debug_record = Record {
+            metadata: std::sync::Arc::new(Metadata {
+                level: Level::Debug,
+                target: "test".to_string(),
+                auth_token: None,
+                app_id: None,
+            }),
+            args: "debug message".to_string(),
+            module_path: None,
+            file: None,
+            line: None,
+        };
+
+        let encoded = UdpPacketHelper::encode_record(&debug_record, None, None).unwrap();
+        let metadata = UdpPacketHelper::get_packet_metadata(&encoded).unwrap();
+
+        assert!(!metadata.level.should_log_at_level(Level::Error));  // Debug日志不应该在Error级别下发送
+        assert!(!metadata.level.should_log_at_level(Level::Warn));   // Debug日志不应该在Warn级别下发送
+        assert!(!metadata.level.should_log_at_level(Level::Info));   // Debug日志不应该在Info级别下发送
+        assert!(metadata.level.should_log_at_level(Level::Debug));  // Debug日志应该在Debug级别下发送
+        assert!(metadata.level.should_log_at_level(Level::Trace));  // Debug日志应该在Trace级别下发送
     }
 }

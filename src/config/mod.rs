@@ -23,6 +23,18 @@ impl Level {
             Level::Trace => LevelFilter::Trace,
         }
     }
+
+    /// 检查在给定的过滤级别下，该日志是否应该被记录
+    /// 返回true表示该级别的日志应该被发送
+    pub fn should_log_at(&self, filter_level: LevelFilter) -> bool {
+        self.to_level_filter() as u8 <= filter_level as u8
+    }
+
+    /// 检查在给定的日志级别下，该日志是否应该被记录
+    /// 返回true表示该级别的日志应该被发送
+    pub fn should_log_at_level(&self, filter_level: Level) -> bool {
+        *self as u8 <= filter_level as u8
+    }
 }
 
 impl std::fmt::Display for Level {
