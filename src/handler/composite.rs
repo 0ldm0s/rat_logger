@@ -41,12 +41,30 @@ impl Default for CompositeHandler {
 
 impl LogHandler for CompositeHandler {
     fn handle(&self, record: &Record) {
-        if self.parallel {
-            // 简化实现
-            for handler in &self.handlers {
-                handler.handle(record);
-            }
+        if self.parallel && self.handlers.len() > 1 {
+            // 并行处理：为每个处理器创建独立的任务
+            let handlers: Vec<Arc<dyn LogHandler>> = self.handlers.iter().cloned().collect();
+            let record = record.clone();
+
+            // 使用tokio进行并行处理
+            tokio::spawn(async move {
+                let join_handles: Vec<_> = handlers
+                    .into_iter()
+                    .map(|handler| {
+                        let record = record.clone();
+                        tokio::spawn(async move {
+                            handler.handle(&record);
+                        })
+                    })
+                    .collect();
+
+                // 等待所有任务完成
+                for handle in join_handles {
+                    let _ = handle.await;
+                }
+            });
         } else {
+            // 串行处理
             for handler in &self.handlers {
                 handler.handle(record);
             }
