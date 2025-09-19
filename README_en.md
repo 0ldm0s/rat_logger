@@ -267,7 +267,7 @@ pub struct NetworkConfig {
 
 Performance on MacBook Air M1 (for reference only):
 
-- Terminal output: ~63,828 messages/sec
+- Terminal output: ~400,000+ messages/sec (optimized)
 - File output: ~408,025 messages/sec
 - Terminal+File: ~501,567 messages/sec
 - Multi-threaded environment: ~239,808 messages/sec

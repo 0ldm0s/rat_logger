@@ -12,7 +12,7 @@ use std::time::Instant;
 use std::path::PathBuf;
 use std::fs;
 
-const ITERATIONS: usize = 100;
+const ITERATIONS: usize = 10000;
 const THREAD_COUNT: usize = 4;
 
 fn create_test_record(level: Level, message: &str) -> Record {
@@ -329,7 +329,7 @@ fn test_basic_functionality() {
     logger.log(&record);
 
     // 清理
-    fs::remove_dir_all(&test_dir).unwrap();
+    let _ = fs::remove_dir_all(&test_dir); // 忽略清理错误
 }
 
 fn main() {
