@@ -1,5 +1,13 @@
 # rat_logger
 
+[![Crates.io](https://img.shields.io/crates/v/rat_logger.svg)](https://crates.io/crates/rat_logger)
+[![Crates.io](https://img.shields.io/crates/d/rat_logger.svg)](https://crates.io/crates/rat_logger)
+[![GitHub stars](https://img.shields.io/github/stars/0ldm0s/rat_logger.svg)](https://github.com/0ldm0s/rat_logger)
+[![GitHub forks](https://img.shields.io/github/forks/0ldm0s/rat_logger.svg)](https://github.com/0ldm0s/rat_logger)
+[![GitHub issues](https://img.shields.io/github/issues/0ldm0s/rat_logger.svg)](https://github.com/0ldm0s/rat_logger/issues)
+[![License](https://img.shields.io/crates/l/rat_logger.svg)](https://crates.io/crates/rat_logger)
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://rust-lang.org)
+
 rat_logger 是一个用 Rust 编写的高性能、线程安全的日志库，采用生产者-消费者架构和异步写入机制，提供卓越的性能表现和灵活的配置选项。
 
 ## 特性
@@ -303,15 +311,7 @@ rat_logger 提供了完善的错误处理机制：
 
 ```toml
 [dependencies]
-rat_logger = "0.1.0"
-tokio = { version = "1.0", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-bincode = "1.3"
-chrono = "0.4"
-lz4 = "1.24"
-crossbeam-channel = "0.5"
-threadpool = "1.8"
-parking_lot = "0.12"
+rat_logger = "0.2.0"
 ```
 
 ## 许可证
@@ -323,6 +323,13 @@ parking_lot = "0.12"
 欢迎提交 Issue 和 Pull Request 来改进 rat_logger。
 
 ## 更新日志
+
+### v0.2.0
+- 升级到 Rust 2024 Edition
+- 更新依赖项到最新版本
+- 性能优化和稳定性改进
+- 发布到 crates.io
+- 改进文档和示例
 
 ### v0.1.0
 - 初始版本发布
