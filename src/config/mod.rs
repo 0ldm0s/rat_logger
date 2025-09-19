@@ -1,6 +1,7 @@
 //! 配置模块
 
 use serde::{Serialize, Deserialize};
+use bincode::{Encode, Decode};
 use std::path::PathBuf;
 
 /// 日志级别
@@ -128,6 +129,30 @@ impl Default for Metadata {
     }
 }
 
+impl bincode::Encode for Metadata {
+    fn encode<E: bincode::enc::Encoder>(&self, encoder: &mut E) -> Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(&self.level, encoder)?;
+        bincode::Encode::encode(&self.target, encoder)?;
+        bincode::Encode::encode(&self.auth_token, encoder)?;
+        bincode::Encode::encode(&self.app_id, encoder)
+    }
+}
+
+impl bincode::Decode<()> for Metadata {
+    fn decode<D: bincode::de::Decoder<Context = ()>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
+        let level = bincode::Decode::decode(decoder)?;
+        let target = bincode::Decode::decode(decoder)?;
+        let auth_token = bincode::Decode::decode(decoder)?;
+        let app_id = bincode::Decode::decode(decoder)?;
+        Ok(Metadata {
+            level,
+            target,
+            auth_token,
+            app_id,
+        })
+    }
+}
+
 /// 日志记录
 #[derive(Clone)]
 pub struct Record {
@@ -151,6 +176,33 @@ impl Serialize for Record {
         state.serialize_field("file", &self.file)?;
         state.serialize_field("line", &self.line)?;
         state.end()
+    }
+}
+
+impl bincode::Encode for Record {
+    fn encode<E: bincode::enc::Encoder>(&self, encoder: &mut E) -> Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(&(*self.metadata).clone(), encoder)?;
+        bincode::Encode::encode(&self.args, encoder)?;
+        bincode::Encode::encode(&self.module_path, encoder)?;
+        bincode::Encode::encode(&self.file, encoder)?;
+        bincode::Encode::encode(&self.line, encoder)
+    }
+}
+
+impl bincode::Decode<()> for Record {
+    fn decode<D: bincode::de::Decoder<Context = ()>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
+        let metadata = bincode::Decode::decode(decoder)?;
+        let args = bincode::Decode::decode(decoder)?;
+        let module_path = bincode::Decode::decode(decoder)?;
+        let file = bincode::Decode::decode(decoder)?;
+        let line = bincode::Decode::decode(decoder)?;
+        Ok(Record {
+            metadata: std::sync::Arc::new(metadata),
+            args,
+            module_path,
+            file,
+            line,
+        })
     }
 }
 
@@ -232,7 +284,7 @@ pub struct ColorConfig {
 }
 
 /// 网络日志配置
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NetworkConfig {
     pub server_addr: String,
     pub server_port: u16,

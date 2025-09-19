@@ -32,7 +32,7 @@ pub mod file;
 pub mod udp;
 pub mod composite;
 
-pub use term::TermHandler;
-pub use file::FileHandler;
-pub use udp::UdpHandler;
+pub use term::TermProcessor;
+pub use file::FileProcessor;
+pub use udp::UdpProcessor;
 pub use composite::CompositeHandler;

@@ -1,28 +1,17 @@
-//! UDP日志处理器
+//! UDP日志处理器 - 高性能异步架构
 
 use std::any::Any;
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 use dashmap::DashMap;
-use crossbeam_channel::{Sender, Receiver, unbounded};
 use parking_lot::Mutex;
 use tokio::net::UdpSocket;
 use tokio::runtime::Runtime;
 
-use crate::handler::{LogHandler, HandlerType};
+use crate::producer_consumer::LogProcessor;
 use crate::config::{Record, NetworkConfig};
 use crate::udp_helper::UdpPacketHelper;
-
-/// UDP指令枚举 - 生产者消费者模式
-enum UdpCommand {
-    /// 发送日志数据
-    Send(Vec<u8>),
-    /// 强制发送缓冲区数据
-    Flush,
-    /// 停止工作线程
-    Shutdown,
-}
 
 /// UDP连接池
 pub struct UdpConnectionPool {
@@ -98,30 +87,60 @@ impl Drop for UdpConnectionPool {
 }
 
 /// UDP处理器配置
-#[derive(Clone)]
-struct UdpHandlerConfig {
-    config: NetworkConfig,
-    retry_count: u32,
-    batch_size: usize,
-    flush_interval_ms: u64,
+#[derive(Debug, Clone)]
+pub struct UdpConfig {
+    /// 网络配置
+    pub network_config: NetworkConfig,
+    /// 重试次数
+    pub retry_count: u32,
+    /// 批量大小
+    pub batch_size: usize,
+    /// 刷新间隔（毫秒）
+    pub flush_interval_ms: u64,
+    /// 连接池大小
+    pub pool_size: usize,
 }
 
-/// UDP日志处理器
-pub struct UdpHandler {
-    config: UdpHandlerConfig,
-    command_sender: Sender<UdpCommand>,
-    worker_thread: Option<thread::JoinHandle<()>>,
-}
-
-impl UdpHandler {
-    /// 创建新的UDP处理器（使用异步批量发送）
-    pub fn new(config: NetworkConfig) -> Self {
-        Self::with_config(UdpHandlerConfig {
-            config,
+impl Default for UdpConfig {
+    fn default() -> Self {
+        Self {
+            network_config: NetworkConfig::default(),
             retry_count: 3,
             batch_size: 8192,  // 8KB批量发送
             flush_interval_ms: 100, // 100ms刷新间隔
-        })
+            pool_size: 10,
+        }
+    }
+}
+
+/// UDP日志处理器 - 实现LogProcessor trait
+pub struct UdpProcessor {
+    config: UdpConfig,
+    pool: Arc<UdpConnectionPool>,
+    buffer: Arc<Mutex<Vec<Vec<u8>>>>,
+    current_batch_size: Arc<Mutex<usize>>,
+    last_flush: Arc<Mutex<Instant>>,
+}
+
+impl UdpProcessor {
+    /// 创建新的UDP处理器
+    pub fn new(config: NetworkConfig) -> Self {
+        let udp_config = UdpConfig {
+            network_config: config,
+            ..Default::default()
+        };
+        Self::with_config(udp_config)
+    }
+
+    /// 使用UDP配置创建处理器
+    pub fn with_config(config: UdpConfig) -> Self {
+        Self {
+            config,
+            pool: Arc::new(UdpConnectionPool::new()),
+            buffer: Arc::new(Mutex::new(Vec::with_capacity(8192))),
+            current_batch_size: Arc::new(Mutex::new(0)),
+            last_flush: Arc::new(Mutex::new(Instant::now())),
+        }
     }
 
     /// 设置重试次数
@@ -130,82 +149,52 @@ impl UdpHandler {
         self
     }
 
-    /// 使用配置创建UDP处理器
-    fn with_config(config: UdpHandlerConfig) -> Self {
-        let (command_sender, command_receiver) = unbounded();
-        let config_clone = config.clone();
-
-        let worker_thread = thread::spawn(move || {
-            Self::worker_thread(config_clone, command_receiver);
-        });
-
-        Self {
-            config,
-            command_sender,
-            worker_thread: Some(worker_thread),
-        }
+    /// 设置批量大小
+    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.config.batch_size = batch_size;
+        self
     }
 
-    /// 工作线程 - 处理所有UDP发送
-    fn worker_thread(config: UdpHandlerConfig, receiver: Receiver<UdpCommand>) {
-        let pool = UdpConnectionPool::new();
-        let mut batch_buffer = Vec::with_capacity(config.batch_size);
-        let mut current_batch_size = 0;
-        let mut last_flush = Instant::now();
-        let flush_interval = std::time::Duration::from_millis(config.flush_interval_ms);
-        let addr = format!("{}:{}", config.config.server_addr, config.config.server_port);
+    /// 设置刷新间隔
+    pub fn with_flush_interval(mut self, flush_interval_ms: u64) -> Self {
+        self.config.flush_interval_ms = flush_interval_ms;
+        self
+    }
 
-        while let Ok(command) = receiver.recv() {
-            match command {
-                UdpCommand::Send(data) => {
-                    let data_size = data.len();
-                    batch_buffer.push(data);
-                    current_batch_size += data_size;
-
-                    // 批量发送条件：达到batch_size字节或flush_interval间隔
-                    if current_batch_size >= config.batch_size || last_flush.elapsed() >= flush_interval {
-                        Self::send_batch(&pool, &addr, &mut batch_buffer, &mut current_batch_size, &config);
-                        last_flush = Instant::now();
-                    }
-                }
-
-                UdpCommand::Flush => {
-                    // 发送剩余数据
-                    if !batch_buffer.is_empty() {
-                        Self::send_batch(&pool, &addr, &mut batch_buffer, &mut current_batch_size, &config);
-                    }
-                }
-
-                UdpCommand::Shutdown => {
-                    // 处理剩余数据并退出
-                    if !batch_buffer.is_empty() {
-                        Self::send_batch(&pool, &addr, &mut batch_buffer, &mut current_batch_size, &config);
-                    }
-                    break;
-                }
-            }
-        }
+    /// 编码日志记录
+    fn encode_record(&self, record: &Record) -> Result<Vec<u8>, String> {
+        UdpPacketHelper::encode_record(
+            record,
+            Some(self.config.network_config.auth_token.clone()),
+            Some(self.config.network_config.app_id.clone()),
+        ).map_err(|e| format!("UDP编码失败: {}", e))
     }
 
     /// 批量发送数据
-    fn send_batch(pool: &UdpConnectionPool, addr: &str, batch_buffer: &mut Vec<Vec<u8>>, current_batch_size: &mut usize, config: &UdpHandlerConfig) {
-        if batch_buffer.is_empty() {
-            return;
+    fn send_batch(&self) -> Result<(), String> {
+        let mut buffer_guard = self.buffer.lock();
+        let mut current_batch_size_guard = self.current_batch_size.lock();
+
+        if buffer_guard.is_empty() {
+            return Ok(());
         }
 
-        // 批量发送所有数据，重用连接池的运行时
-        for data in batch_buffer.drain(..) {
-            let pool = pool.clone();
-            let addr = addr.to_string();
-            let retry_count = config.retry_count;
+        let addr = format!("{}:{}", self.config.network_config.server_addr, self.config.network_config.server_port);
 
+        // 批量发送所有数据
+        for data in buffer_guard.drain(..) {
+            let pool = Arc::clone(&self.pool);
+            let addr = addr.clone();
+            let retry_count = self.config.retry_count;
+
+            // 在当前线程的运行时中异步发送
             pool.runtime.block_on(async {
                 for attempt in 0..retry_count {
                     match pool.send_data(&addr, &data).await {
                         Ok(_) => break,
                         Err(e) => {
                             if attempt == retry_count - 1 {
-                                eprintln!("UDP batch send failed after {} attempts: {}", retry_count, e);
+                                eprintln!("[udp] 批量发送失败，重试{}次后放弃: {}", retry_count, e);
                             } else {
                                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                             }
@@ -216,56 +205,86 @@ impl UdpHandler {
         }
 
         // 重置批处理大小计数器
-        *current_batch_size = 0;
+        *current_batch_size_guard = 0;
+
+        // 更新最后刷新时间
+        let mut last_flush_guard = self.last_flush.lock();
+        *last_flush_guard = Instant::now();
+
+        Ok(())
     }
 
-    /// 发送单个日志记录（编码后发送到工作线程）
-    fn send_to_worker(&self, record: &Record) {
-        match UdpPacketHelper::encode_record(
-            record,
-            Some(self.config.config.auth_token.clone()),
-            Some(self.config.config.app_id.clone())
-        ) {
-            Ok(data) => {
-                if let Err(e) = self.command_sender.send(UdpCommand::Send(data)) {
-                    eprintln!("UDP command send failed: {}", e);
-                }
-            }
-            Err(e) => {
-                eprintln!("UDP encode failed: {}", e);
-            }
+    /// 添加数据到缓冲区
+    fn add_to_buffer(&self, data: Vec<u8>) -> Result<(), String> {
+        let mut buffer_guard = self.buffer.lock();
+        let mut current_batch_size_guard = self.current_batch_size.lock();
+        let data_size = data.len();
+
+        buffer_guard.push(data);
+        *current_batch_size_guard += data_size;
+
+        // 检查是否需要发送
+        let should_send = *current_batch_size_guard >= self.config.batch_size ||
+                          {
+                              let last_flush_guard = self.last_flush.lock();
+                              last_flush_guard.elapsed() >= std::time::Duration::from_millis(self.config.flush_interval_ms)
+                          };
+
+        if should_send {
+            drop(buffer_guard);
+            drop(current_batch_size_guard);
+            self.send_batch()?;
         }
+
+        Ok(())
     }
 }
 
-impl LogHandler for UdpHandler {
-    fn handle(&self, record: &Record) {
-        self.send_to_worker(record);
+impl LogProcessor for UdpProcessor {
+    fn name(&self) -> &'static str {
+        "udp_processor"
     }
 
-    fn flush(&self) {
-        // 发送刷新命令
-        if let Err(e) = self.command_sender.send(UdpCommand::Flush) {
-            eprintln!("UDP flush command send failed: {}", e);
+    fn process(&mut self, data: &[u8]) -> Result<(), String> {
+        // 反序列化日志记录
+        let record = bincode::decode_from_slice::<Record, _>(data, bincode::config::standard())
+            .map_err(|e| format!("反序列化失败: {}", e))?.0;
+
+        // 编码为UDP包
+        let encoded_data = self.encode_record(&record)?;
+
+        // 添加到缓冲区
+        self.add_to_buffer(encoded_data)
+    }
+
+    fn process_batch(&mut self, batch: &[Vec<u8>]) -> Result<(), String> {
+        for data in batch {
+            // 反序列化日志记录
+            let record = bincode::decode_from_slice::<Record, _>(data, bincode::config::standard())
+                .map_err(|e| format!("批量反序列化失败: {}", e))?.0;
+
+            // 编码为UDP包
+            let encoded_data = self.encode_record(&record)?;
+
+            // 添加到缓冲区
+            self.add_to_buffer(encoded_data)?;
         }
+
+        Ok(())
     }
 
-    fn handler_type(&self) -> HandlerType {
-        HandlerType::Udp
+    fn flush(&mut self) -> Result<(), String> {
+        // 发送缓冲区中的所有数据
+        self.send_batch()
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
+    fn cleanup(&mut self) -> Result<(), String> {
+        // 先刷新剩余数据
+        self.flush()?;
 
-impl Drop for UdpHandler {
-    fn drop(&mut self) {
-        // 发送关闭命令
-        let _ = self.command_sender.send(UdpCommand::Shutdown);
-        // 等待工作线程结束
-        if let Some(thread) = self.worker_thread.take() {
-            let _ = thread.join();
-        }
+        // 清理连接池
+        self.pool.cleanup();
+
+        Ok(())
     }
 }
