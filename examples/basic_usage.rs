@@ -48,6 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     let file_logger = LoggerBuilder::new()
@@ -110,6 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     let multi_logger = LoggerBuilder::new()

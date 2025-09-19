@@ -23,6 +23,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     // 使用LoggerBuilder创建多输出日志器（终端 + 文件）

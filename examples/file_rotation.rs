@@ -25,6 +25,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     let logger = LoggerBuilder::new()

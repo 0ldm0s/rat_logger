@@ -100,6 +100,17 @@ impl FileProcessor {
             Self::worker_thread(writer_clone, rotator_clone, receiver, config_clone);
         });
 
+        // 根据配置设置格式化器
+        let formatter: Box<dyn Fn(&mut dyn Write, &Record) -> io::Result<()> + Send + Sync> =
+            if let Some(format_config) = &config.file_config.format {
+                let format_config = format_config.clone();
+                Box::new(move |buf, record| {
+                    Self::format_with_config(buf, record, &format_config)
+                })
+            } else {
+                Box::new(Self::default_format)
+            };
+
         Self {
             config,
             writer,
@@ -108,7 +119,7 @@ impl FileProcessor {
             last_flush: Arc::new(Mutex::new(Instant::now())),
             command_sender: sender,
             writer_thread: Some(writer_thread),
-            formatter: Box::new(Self::default_format),
+            formatter,
         }
     }
 

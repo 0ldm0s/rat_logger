@@ -26,6 +26,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: true, // 程序结束时强制压缩
+        format: None,
     };
 
     // 2. 错误日志文件 - 程序结束时压缩
@@ -38,6 +39,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: true, // 程序结束时强制压缩
+        format: None,
     };
 
     // 3. 访问日志文件 - 不在程序结束时压缩
@@ -50,6 +52,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false, // 不在程序结束时压缩
+        format: None,
     };
 
     // 4. 性能监控日志文件 - 不在程序结束时压缩
@@ -62,6 +65,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false, // 不在程序结束时压缩
+        format: None,
     };
 
     // 创建主日志器（包含终端输出）

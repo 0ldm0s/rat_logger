@@ -21,6 +21,10 @@ pub struct TermConfig {
     pub batch_size: usize,
     /// 刷新间隔（毫秒）
     pub flush_interval_ms: u64,
+    /// 格式配置
+    pub format: Option<FormatConfig>,
+    /// 颜色配置
+    pub color: Option<ColorConfig>,
 }
 
 impl Default for TermConfig {
@@ -30,6 +34,8 @@ impl Default for TermConfig {
             enable_async: true,
             batch_size: 8192,
             flush_interval_ms: 100,
+            format: None,
+            color: None,
         }
     }
 }
@@ -53,9 +59,26 @@ impl TermProcessor {
 
     /// 使用配置创建终端处理器
     pub fn with_config(config: TermConfig) -> Self {
+        let formatter: Box<dyn Fn(&mut dyn Write, &Record) -> io::Result<()> + Send + Sync> = match (&config.format, &config.color) {
+            (Some(format_config), Some(color_config)) => {
+                let format_config = format_config.clone();
+                let color_config = color_config.clone();
+                Box::new(move |buf, record| {
+                    format_with_color(buf, record, &format_config, &color_config)
+                })
+            }
+            (Some(format_config), None) => {
+                let format_config = format_config.clone();
+                Box::new(move |buf, record| {
+                    format_with_config(buf, record, &format_config)
+                })
+            }
+            (None, _) => Box::new(default_format),
+        };
+
         let processor = Self {
             config,
-            formatter: Box::new(default_format),
+            formatter,
             buffer: Arc::new(Mutex::new(Vec::with_capacity(64 * 1024))),
             last_flush: Arc::new(Mutex::new(Instant::now())),
             is_running: Arc::new(AtomicBool::new(true)),

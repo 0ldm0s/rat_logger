@@ -2,15 +2,19 @@
 
 use std::sync::Arc;
 use crossbeam_channel::{Sender, Receiver, unbounded};
-use once_cell::sync::OnceCell;
+use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
+use std::sync::Mutex;
 
 use crate::config::{LevelFilter, Record};
 use crate::producer_consumer::{LogProcessor, ProcessorManager, BatchConfig};
 
 /// 全局日志器实例
-pub static LOGGER: OnceCell<Arc<dyn Logger>> = OnceCell::new();
+pub static LOGGER: Lazy<Mutex<Option<Arc<dyn Logger>>>> = Lazy::new(|| Mutex::new(None));
+
+/// 全局日志器锁（用于开发模式重新初始化）
+static LOGGER_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
 /// 全局最大日志级别
 static MAX_LEVEL: AtomicUsize = AtomicUsize::new(LevelFilter::Info as usize);
@@ -142,8 +146,13 @@ impl LoggerBuilder {
 
     /// 添加终端处理器
     pub fn add_terminal(mut self) -> Self {
+        self.add_terminal_with_config(crate::handler::term::TermConfig::default())
+    }
+
+    /// 添加带配置的终端处理器
+    pub fn add_terminal_with_config(mut self, config: crate::handler::term::TermConfig) -> Self {
         use crate::handler::term::TermProcessor;
-        let processor = TermProcessor::new();
+        let processor = TermProcessor::with_config(config);
         if let Err(e) = self.processor_manager.add_processor(processor, self.batch_config.clone()) {
             eprintln!("添加终端处理器失败: {}", e);
         }
@@ -178,8 +187,16 @@ impl LoggerBuilder {
     /// 构建并初始化全局日志器
     pub fn init(self) -> Result<(), SetLoggerError> {
         let level = self.level;
+        let is_dev_mode = self.dev_mode;
         let logger = Arc::new(self.build());
-        set_logger(logger)?;
+
+        // 开发模式下允许重新初始化
+        if is_dev_mode || cfg!(debug_assertions) {
+            set_logger_dev(logger)?;
+        } else {
+            set_logger(logger)?;
+        }
+
         set_max_level(level);
         Ok(())
     }
@@ -193,7 +210,35 @@ impl Default for LoggerBuilder {
 
 /// 设置全局日志器
 pub fn set_logger(logger: Arc<dyn Logger>) -> Result<(), SetLoggerError> {
-    LOGGER.set(logger).map_err(|_| SetLoggerError(()))
+    let mut guard = LOGGER.lock().unwrap();
+    if guard.is_some() {
+        return Err(SetLoggerError(()));
+    }
+    *guard = Some(logger);
+    Ok(())
+}
+
+/// 开发模式友好的日志器设置（允许重新初始化）
+pub fn set_logger_dev(logger: Arc<dyn Logger>) -> Result<(), SetLoggerError> {
+    // 开发模式下：使用写锁来保证安全
+    let _lock = LOGGER_LOCK.write().unwrap();
+
+    let mut guard = LOGGER.lock().unwrap();
+    if guard.is_some() {
+        eprintln!("⚠️  警告：重新初始化全局日志器（开发模式）");
+        eprintln!("⚠️  此功能仅供开发使用，生产环境请确保只初始化一次日志器");
+    }
+    *guard = Some(logger);
+    Ok(())
+}
+
+/// 空日志器实现（用于开发模式重新初始化）
+struct NullLogger;
+impl Logger for NullLogger {
+    fn log(&self, _record: &Record) {}
+    fn flush(&self) {}
+    fn set_level(&self, _level: LevelFilter) {}
+    fn level(&self) -> LevelFilter { LevelFilter::Off }
 }
 
 /// 设置全局最大日志级别

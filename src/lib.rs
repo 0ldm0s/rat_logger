@@ -91,7 +91,7 @@ pub fn __private_log_impl(
     file: &'static str,
     line: u32,
 ) {
-    if let Some(logger) = core::LOGGER.get() {
+    if let Some(logger) = core::LOGGER.lock().unwrap().as_ref() {
         let record = Record {
             metadata: std::sync::Arc::new(Metadata {
                 level,

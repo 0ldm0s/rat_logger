@@ -78,6 +78,7 @@ fn benchmark_file_only() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     let logger = LoggerBuilder::new()
@@ -128,6 +129,7 @@ fn benchmark_terminal_and_file() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     let logger = LoggerBuilder::new()
@@ -179,6 +181,7 @@ fn benchmark_multithreaded() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     let logger = Arc::new(LoggerBuilder::new()
@@ -242,6 +245,7 @@ fn benchmark_different_log_levels() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     let levels = vec![
@@ -318,6 +322,7 @@ fn test_basic_functionality() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     let logger = LoggerBuilder::new()
