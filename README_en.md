@@ -286,12 +286,12 @@ Performance on MacBook Air M1 local environment (for reference only):
 - Multi-threaded environment: ~239,808 messages/sec
 - Different log levels: 833K-1.7M messages/sec
 
-#### UDP Network Transmission Performance
-- 100 messages batch: ~725,516 messages/sec
-- 1000 messages batch: ~860,739 messages/sec
-- 5000 messages batch: ~921,326 messages/sec
+#### UDP Network Transmission Performance (test_client results)
+- 100 messages batch: **806,452 messages/sec**
+- 1000 messages batch: **1,215,498 messages/sec**
+- 5000 messages batch: **1,087,627 messages/sec**
 
-*Note: UDP network transmission tests are based on local loopback interface (127.0.0.1), actual network performance may vary depending on network conditions*
+*Note: UDP network transmission tests are based on test_client tool and local loopback interface (127.0.0.1), using release mode compilation, actual network performance may vary depending on network conditions*
 
 ## Thread Safety
 
