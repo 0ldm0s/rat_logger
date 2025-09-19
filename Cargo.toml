@@ -3,7 +3,14 @@ name = "rat_logger"
 version = "0.2.0"
 edition = "2024"
 authors = ["0ldm0s <oldmos@gmail.com>"]
-description = "High-performance logging library for Rust applications"
+description = "High-performance logging library with producer-consumer architecture, async file operations, and hierarchical configuration system"
+license = "LGPL-3.0"
+repository = "https://github.com/0ldm0s/rat_logger"
+homepage = "https://github.com/0ldm0s/rat_logger"
+documentation = "https://docs.rs/rat_logger"
+readme = "README.md"
+keywords = ["logging", "logger", "async", "performance", "file"]
+categories = ["development-tools::debugging", "asynchronous"]
 
 [dependencies]
 chrono = "0.4.41"
