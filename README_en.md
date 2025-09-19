@@ -10,15 +10,17 @@
 
 [🇨🇳 中文](README.md) | [🇺🇸 English](README_en.md) | [🇯🇵 日本語](README_ja.md)
 
-rat_logger is a high-performance, thread-safe logging library written in Rust, featuring a producer-consumer architecture and asynchronous writing mechanisms that deliver excellent performance and flexible configuration options.
+rat_logger is a high-performance, thread-safe logging library written in Rust, featuring an asynchronous broadcast architecture and batch processing mechanisms that deliver excellent performance and flexible configuration options.
 
 ## Features
 
-- **Extreme Performance**: Producer-consumer architecture with实测 file writing performance up to 400K+ msg/sec on MacBook Air M1 (for reference only)
+- **Extreme Performance**: Asynchronous broadcast architecture with terminal output performance up to 400K+ msg/sec on MacBook Air M1 (for reference only)
 - **Thread Safety**: Fully thread-safe, supports multi-threaded concurrent writing using atomic operations to avoid lock contention
 - **Multiple Output Methods**: Supports terminal, file, UDP network and other output methods
 - **Layered Configuration**: Format configuration separated from color configuration, default no color theme
 - **Logging Macros**: Compatible with standard log library macro interfaces, providing convenient logging methods
+- **Development Mode**: Optional development mode ensures immediate log output for debugging and learning
+- **Flexible Configuration**: Unified LoggerBuilder interface supporting chain configuration
 - **Structured Logging**: Supports structured logging and metadata
 - **Compression Support**: Built-in LZ4 compression functionality, automatically compresses old log files
 - **UDP Network Transmission**: Supports sending logs to remote servers via UDP protocol
@@ -29,11 +31,14 @@ rat_logger is a high-performance, thread-safe logging library written in Rust, f
 ### Using Logging Macros (Recommended)
 
 ```rust
-use rat_logger::{init_with_level, LevelFilter, error, warn, info, debug, trace};
+use rat_logger::{LoggerBuilder, LevelFilter, error, warn, info, debug, trace};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize global logger
-    init_with_level(LevelFilter::Debug)?;
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Debug)
+        .add_terminal()
+        .init()?;
 
     // Use logging macros to record logs
     error!("This is an error log");
@@ -267,7 +272,14 @@ pub struct NetworkConfig {
 
 Performance on MacBook Air M1 local environment (for reference only):
 
-#### File and Terminal Output
+#### New Version v0.2.3 Performance (Asynchronous Broadcast Architecture)
+- Terminal output: **2,264,813 messages/sec** - 5.6x improvement
+- File output: **2,417,040 messages/sec** - 5.9x improvement
+- Terminal+File: **1,983,192 messages/sec** - 3.9x improvement
+- Multi-threaded environment: **3,538,831 messages/sec** - 14.7x improvement ⭐
+- Different log levels: **4.3M-4.7M messages/sec** - 2.5-5.6x improvement
+
+#### Historical Version Performance (Comparison Reference)
 - Terminal output: ~400,000+ messages/sec (optimized)
 - File output: ~408,025 messages/sec
 - Terminal+File: ~501,567 messages/sec
@@ -333,6 +345,24 @@ This project is licensed under LGPLv3. See [LICENSE](LICENSE) file for details.
 Welcome to submit Issues and Pull Requests to improve rat_logger.
 
 ## Changelog
+
+### v0.2.3
+- **Architecture Refactor**: Complete rewrite to asynchronous broadcast architecture, removing old synchronous architecture
+- **Development Mode**: Added development mode functionality for debugging and learning
+- **Performance Optimization**: Terminal processor performance improved by 6x, significantly enhancing overall performance
+- **LoggerBuilder Improvements**: Unified builder interface supporting more flexible configuration
+- **Examples Update**: All examples now include development mode and production environment usage warnings
+- **Documentation Enhancement**: Updated README and usage guides with multi-language support
+
+### v0.2.2
+- Fixed compilation errors and dependency issues
+- Improved error handling mechanism
+- Optimized memory usage
+
+### v0.2.1
+- Fixed compilation errors and dependency issues
+- Improved error handling mechanism
+- Optimized memory usage
 
 ### v0.2.0
 - Upgraded to Rust 2024 Edition
