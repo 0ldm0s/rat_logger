@@ -1,6 +1,11 @@
 //! 多输出处理器示例
 //!
 //! 展示如何使用LoggerBuilder同时添加终端和文件输出，实现类似组合处理器的效果
+//!
+//! ⚠️  重要提醒：
+//! - 本示例启用开发模式以确保日志立即输出，方便演示和学习
+//! - 在生产环境中，请禁用开发模式以获得最佳性能
+//! - 生产环境推荐：LoggerBuilder::new().add_terminal().add_file(config).build()
 
 use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, Logger};
 use rat_logger::config::Record;
@@ -24,6 +29,7 @@ fn main() {
     // 这实际上是内部使用了CompositeHandler
     let logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_terminal()  // 添加终端输出
         .add_file(file_config)  // 添加文件输出
         .build();

@@ -1,6 +1,11 @@
 //! rat_logger 基础使用示例
 //!
 //! 展示rat_logger的基本功能和使用方法
+//!
+//! ⚠️  重要提醒：
+//! - 本示例启用开发模式以确保日志立即输出，方便演示和学习
+//! - 在生产环境中，请禁用开发模式以获得最佳性能
+//! - 生产环境推荐：LoggerBuilder::new().add_terminal().build()
 
 use rat_logger::{LoggerBuilder, LevelFilter, Level, FileConfig, NetworkConfig, config::Record, Logger};
 use rat_logger::config::Metadata;
@@ -14,6 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("1. 基本终端日志:");
     let terminal_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_terminal()
         .build();
 
@@ -46,6 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let file_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_file(file_config)
         .build();
 
@@ -74,6 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let network_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_udp(network_config)
         .build();
 
@@ -106,6 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let multi_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_terminal()
         .add_file(multi_config)
         .build();
@@ -128,6 +137,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n5. 不同级别的日志:");
     let level_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Trace)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_terminal()
         .build();
 

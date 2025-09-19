@@ -1,6 +1,11 @@
 //! PM2风格多文件日志管理示例
 //!
 //! 展示如何像PM2一样管理多个独立的日志文件，不同类型的日志输出到不同的文件
+//!
+//! ⚠️  重要提醒：
+//! - 本示例启用开发模式以确保日志立即输出，方便演示和学习
+//! - 在生产环境中，请禁用开发模式以获得最佳性能
+//! - 生产环境推荐：LoggerBuilder::new().add_file(config).build()
 
 use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, Logger};
 use rat_logger::config::Record;
@@ -62,6 +67,7 @@ fn main() {
     // 创建主日志器（包含终端输出）
     let main_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_terminal()  // 终端输出
         .add_file(main_app_config.clone())
         .build();
@@ -69,18 +75,21 @@ fn main() {
     // 创建错误专用日志器
     let error_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Error)  // 只记录错误级别
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_file(error_log_config.clone())
         .build();
 
     // 创建访问日志专用日志器
     let access_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_file(access_log_config.clone())
         .build();
 
     // 创建性能监控专用日志器
     let perf_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_file(perf_log_config.clone())
         .build();
 

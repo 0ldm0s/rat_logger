@@ -1,9 +1,16 @@
 //! rat_logger 格式配置示例
 //!
 //! 演示如何使用rat_logger的格式配置功能
+//!
+//! ⚠️  重要提醒：
+//! - 本示例启用开发模式以确保日志立即输出，方便演示和学习
+//! - 在生产环境中，请禁用开发模式以获得最佳性能
+//! - 生产环境推荐：LoggerBuilder::new().add_terminal().build()
 
-use rat_logger::{TermHandler, FileHandler, Logger};
-use rat_logger::handler::LogHandler;
+use rat_logger::{LoggerBuilder, LevelFilter, Level, FileConfig, NetworkConfig, FormatConfig, ColorConfig, Logger};
+use rat_logger::config::{Record, Metadata};
+use std::sync::Arc;
+use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== rat_logger 格式配置示例 ===\n");
@@ -55,24 +62,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 4. 测试不同配置组合
     println!("4. 测试配置组合:");
 
-    // 4.1 默认无颜色
-    println!("   4.1 默认无颜色格式:");
-    let logger1 = TermHandler::with_format(simple_format.clone());
+    // 4.1 基本终端格式测试
+    println!("   4.1 基本终端格式:");
+    let logger1 = LoggerBuilder::new()
+        .with_level(LevelFilter::Debug)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        .add_terminal()
+        .build();
 
-    logger1.handle(&create_test_record(rat_logger::Level::Error, "test", "错误消息"));
-    logger1.handle(&create_test_record(rat_logger::Level::Info, "test", "信息消息"));
+    logger1.log(&create_test_record(Level::Error, "test", "错误消息"));
+    logger1.log(&create_test_record(Level::Info, "test", "信息消息"));
 
-    // 4.2 带颜色的详细格式
-    println!("   4.2 带颜色的详细格式:");
-    let logger2 = TermHandler::with_format_and_color(detailed_format.clone(), color_config.clone());
-
-    logger2.handle(&create_test_record(rat_logger::Level::Error, "test", "错误消息"));
-    logger2.handle(&create_test_record(rat_logger::Level::Info, "test", "信息消息"));
-
-    // 4.3 文件格式配置
-    println!("   4.3 文件格式配置:");
-    let file_config = rat_logger::FileConfig {
-        log_dir: "./format_logs".into(),
+    // 4.2 文件格式测试
+    println!("   4.2 文件格式:");
+    let file_config = FileConfig {
+        log_dir: PathBuf::from("./format_logs"),
         max_file_size: 1024 * 1024,
         max_compressed_files: 2,
         compression_level: 6,
@@ -82,23 +86,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         compress_on_drop: false,
     };
 
-    let file_format = rat_logger::FormatConfig {
-        timestamp_format: "%Y-%m-%d %H:%M:%S".to_string(),
-        level_style: rat_logger::LevelStyle {
-            error: "[ERROR]".to_string(),
-            warn: "[WARN] ".to_string(),
-            info: "[INFO] ".to_string(),
-            debug: "[DEBUG]".to_string(),
-            trace: "[TRACE]".to_string(),
-        },
-        format_template: "{timestamp} {level} {message}".to_string(),
+    let logger2 = LoggerBuilder::new()
+        .with_level(LevelFilter::Debug)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        .add_file(file_config)
+        .build();
+
+    logger2.log(&create_test_record(Level::Error, "file_test", "文件错误消息"));
+    logger2.log(&create_test_record(Level::Info, "file_test", "文件信息消息"));
+
+    // 4.3 网络日志测试
+    println!("   4.3 网络日志:");
+    let network_config = rat_logger::NetworkConfig {
+        server_addr: "127.0.0.1".to_string(),
+        server_port: 54321,
+        auth_token: "format_token".to_string(),
+        app_id: "format_app".to_string(),
     };
 
-    let logger3 = FileHandler::new(file_config).with_format(file_format);
+    let logger3 = LoggerBuilder::new()
+        .with_level(LevelFilter::Debug)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        .add_udp(network_config)
+        .build();
 
-    logger3.handle(&create_test_record(rat_logger::Level::Error, "file_test", "文件错误消息"));
-    logger3.handle(&create_test_record(rat_logger::Level::Info, "file_test", "文件信息消息"));
-    logger3.flush();
+    logger3.log(&create_test_record(Level::Error, "network_test", "网络错误消息"));
+    logger3.log(&create_test_record(Level::Info, "network_test", "网络信息消息"));
 
     println!("\n=== 示例完成 ===");
     println!("格式配置说明:");
@@ -111,12 +124,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn create_test_record(
-    level: rat_logger::Level,
+    level: Level,
     target: &str,
     message: &str,
-) -> rat_logger::config::Record {
-    rat_logger::config::Record {
-        metadata: std::sync::Arc::new(rat_logger::config::Metadata {
+) -> Record {
+    Record {
+        metadata: Arc::new(Metadata {
             level,
             target: target.to_string(),
             auth_token: None,

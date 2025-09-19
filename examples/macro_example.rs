@@ -1,15 +1,25 @@
 //! rat_logger 日志宏使用示例
 //!
 //! 演示如何使用rat_logger的日志宏，类似于标准log库的使用方式
+//!
+//! ⚠️  重要提醒：
+//! - 本示例启用开发模式以确保日志立即输出，方便演示和学习
+//! - 在生产环境中，请禁用开发模式以获得最佳性能
+//! - 生产环境推荐：LoggerBuilder::new().add_terminal().init()
 
-use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, init_with_level, error, warn, info, debug, trace, Logger};
+use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, error, warn, info, debug, trace, Logger};
+use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== rat_logger 日志宏使用示例 ===\n");
 
     // 1. 初始化全局日志器
     println!("1. 初始化全局日志器:");
-    init_with_level(LevelFilter::Debug)?;
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Debug)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        .add_terminal()
+        .init()?;
     println!("   ✓ 全局日志器已初始化\n");
 
     // 2. 使用日志宏记录不同级别的日志
@@ -41,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 5. 自定义日志器 + 日志宏
     println!("5. 自定义日志器 + 日志宏:");
     let file_config = FileConfig {
-        log_dir: "./macro_logs".into(),
+        log_dir: PathBuf::from("./macro_logs"),
         max_file_size: 1024 * 1024, // 1MB
         max_compressed_files: 3,
         compression_level: 6,
@@ -53,6 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let custom_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Trace)
+        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_terminal()
         .add_file(file_config)
         .build();
