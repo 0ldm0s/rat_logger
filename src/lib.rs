@@ -14,7 +14,7 @@ use config::{Record, Metadata, AppId};
 // 重新导出主要类型
 pub use core::{Logger, LoggerBuilder};
 pub use handler::{composite::CompositeHandler, term::TermHandler, file::FileHandler, udp::UdpHandler};
-pub use config::{Level, LevelFilter, FileConfig, NetworkConfig};
+pub use config::{Level, LevelFilter, FileConfig, NetworkConfig, FormatConfig, LevelStyle, ColorConfig};
 
 // 日志宏
 #[macro_export]

@@ -11,7 +11,7 @@ use crossbeam_channel::{Sender, Receiver, unbounded};
 use std::thread;
 
 use crate::handler::{LogHandler, HandlerType};
-use crate::config::{Record, FileConfig};
+use crate::config::{Record, FileConfig, FormatConfig, Level};
 
 /// 全局压缩线程池
 lazy_static::lazy_static! {
@@ -226,6 +226,13 @@ impl FileHandler {
         F: Fn(&mut dyn Write, &Record) -> io::Result<()> + Send + Sync + 'static,
     {
         self.formatter = Box::new(formatter);
+        self
+    }
+
+    /// 使用格式配置
+    pub fn with_format(mut self, format_config: FormatConfig) -> Self {
+        let format_config = format_config.clone();
+        self.formatter = Box::new(move |buf, record| file_format_with_config(buf, record, &format_config));
         self
     }
 
@@ -471,4 +478,32 @@ fn default_format(buf: &mut dyn Write, record: &Record) -> io::Result<()> {
         record.line.unwrap_or(0),
         record.args
     )
+}
+
+/// 文件格式化函数
+fn file_format_with_config(buf: &mut dyn Write, record: &Record, format_config: &FormatConfig) -> io::Result<()> {
+    use chrono::Local;
+
+    let now = Local::now();
+    let timestamp = now.format(&format_config.timestamp_format);
+
+    // 获取级别显示文本
+    let level_text = match record.metadata.level {
+        Level::Error => &format_config.level_style.error,
+        Level::Warn => &format_config.level_style.warn,
+        Level::Info => &format_config.level_style.info,
+        Level::Debug => &format_config.level_style.debug,
+        Level::Trace => &format_config.level_style.trace,
+    };
+
+    // 使用格式模板
+    let formatted = format_config.format_template
+        .replace("{level}", level_text)
+        .replace("{timestamp}", &timestamp.to_string())
+        .replace("{target}", &record.metadata.target)
+        .replace("{file}", record.file.as_deref().unwrap_or("unknown"))
+        .replace("{line}", &record.line.unwrap_or(0).to_string())
+        .replace("{message}", &record.args);
+
+    writeln!(buf, "{}", formatted)
 }

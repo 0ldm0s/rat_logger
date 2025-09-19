@@ -182,6 +182,55 @@ impl Default for FileConfig {
     }
 }
 
+/// 日志格式配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormatConfig {
+    /// 时间戳格式
+    pub timestamp_format: String,
+    /// 日志级别显示样式
+    pub level_style: LevelStyle,
+    /// 输出格式模板
+    pub format_template: String,
+}
+
+/// 日志级别样式配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LevelStyle {
+    /// 错误级别显示
+    pub error: String,
+    /// 警告级别显示
+    pub warn: String,
+    /// 信息级别显示
+    pub info: String,
+    /// 调试级别显示
+    pub debug: String,
+    /// 跟踪级别显示
+    pub trace: String,
+}
+
+/// 终端颜色配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColorConfig {
+    /// 错误级别颜色 (ANSI颜色代码)
+    pub error: String,
+    /// 警告级别颜色
+    pub warn: String,
+    /// 信息级别颜色
+    pub info: String,
+    /// 调试级别颜色
+    pub debug: String,
+    /// 跟踪级别颜色
+    pub trace: String,
+    /// 时间戳颜色
+    pub timestamp: String,
+    /// 目标颜色
+    pub target: String,
+    /// 文件名颜色
+    pub file: String,
+    /// 消息颜色
+    pub message: String,
+}
+
 /// 网络日志配置
 #[derive(Clone, Serialize, Deserialize)]
 pub struct NetworkConfig {
@@ -201,6 +250,45 @@ impl Default for NetworkConfig {
         }
     }
 }
+
+impl Default for FormatConfig {
+    fn default() -> Self {
+        Self {
+            timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
+            level_style: LevelStyle::default(),
+            format_template: "{timestamp} [{level}] {target}:{line} - {message}".to_string(),
+        }
+    }
+}
+
+impl Default for ColorConfig {
+    fn default() -> Self {
+        Self {
+            error: "\x1b[31m".to_string(),      // 红色
+            warn: "\x1b[33m".to_string(),       // 黄色
+            info: "\x1b[32m".to_string(),       // 绿色
+            debug: "\x1b[36m".to_string(),      // 青色
+            trace: "\x1b[37m".to_string(),      // 白色
+            timestamp: "\x1b[90m".to_string(),   // 深灰色
+            target: "\x1b[34m".to_string(),      // 蓝色
+            file: "\x1b[35m".to_string(),       // 紫色
+            message: "\x1b[0m".to_string(),      // 重置颜色
+        }
+    }
+}
+
+impl Default for LevelStyle {
+    fn default() -> Self {
+        Self {
+            error: "ERROR".to_string(),
+            warn: "WARN".to_string(),
+            info: "INFO".to_string(),
+            debug: "DEBUG".to_string(),
+            trace: "TRACE".to_string(),
+        }
+    }
+}
+
 
 /// 用于网络传输的日志记录
 #[derive(Serialize, Deserialize)]
