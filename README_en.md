@@ -265,13 +265,21 @@ pub struct NetworkConfig {
 
 ### Performance Benchmark Results
 
-Performance on MacBook Air M1 (for reference only):
+Performance on MacBook Air M1 local environment (for reference only):
 
+#### File and Terminal Output
 - Terminal output: ~400,000+ messages/sec (optimized)
 - File output: ~408,025 messages/sec
 - Terminal+File: ~501,567 messages/sec
 - Multi-threaded environment: ~239,808 messages/sec
 - Different log levels: 833K-1.7M messages/sec
+
+#### UDP Network Transmission Performance
+- 100 messages batch: ~725,516 messages/sec
+- 1000 messages batch: ~860,739 messages/sec
+- 5000 messages batch: ~921,326 messages/sec
+
+*Note: UDP network transmission tests are based on local loopback interface (127.0.0.1), actual network performance may vary depending on network conditions*
 
 ## Thread Safety
 
