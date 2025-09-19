@@ -39,9 +39,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### 自定义处理器配置
 
 ```rust
-use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, FormatConfig, LevelStyle, ColorConfig};
+use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, FormatConfig, LevelStyle, ColorConfig, TermHandler};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     // 创建格式配置
     let format_config = FormatConfig {
         timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
@@ -83,20 +83,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 构建日志器
     let logger = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
-        .add_terminal_with_format_and_color(format_config.clone(), color_config)
-        .add_file_with_format(file_config, format_config)
-        .build()?;
-
-    Ok(())
+        .add_terminal()
+        .add_file(file_config)
+        .build();
 }
 ```
 
 ### 单独文件处理器
 
 ```rust
-use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, FileHandler};
+use rat_logger::{LoggerBuilder, LevelFilter, FileConfig};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     let file_config = FileConfig {
         log_dir: "./app_logs".into(),
         max_file_size: 10 * 1024 * 1024, // 10MB
@@ -111,9 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let logger = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
         .add_file(file_config)
-        .build()?;
-
-    Ok(())
+        .build();
 }
 ```
 
@@ -122,7 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```rust
 use rat_logger::{LoggerBuilder, LevelFilter, NetworkConfig};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     let network_config = NetworkConfig {
         server_addr: "127.0.0.1".to_string(),
         server_port: 54321,
@@ -133,28 +129,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
         .add_udp(network_config)
-        .build()?;
-
-    Ok(())
+        .build();
 }
 ```
 
-### 复合处理器
+### 多输出处理器
 
 ```rust
-use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, composite::CompositeHandler, FileHandler, TermHandler};
+use rat_logger::{LoggerBuilder, LevelFilter, FileConfig};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 创建复合处理器
-    let mut composite = CompositeHandler::new();
-
-    // 添加终端处理器
-    composite.add_handler(TermHandler::new());
-
-    // 添加文件处理器
+fn main() {
     let file_config = FileConfig {
         log_dir: "./app_logs".into(),
-        max_file_size: 10 * 1024 * 1024,
+        max_file_size: 10 * 1024 * 1024, // 10MB
         max_compressed_files: 5,
         compression_level: 4,
         min_compress_threads: 2,
@@ -162,14 +149,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         is_raw: false,
         compress_on_drop: false,
     };
-    composite.add_handler(FileHandler::new(file_config));
 
+    // 创建多输出日志器（终端 + 文件）
+    // LoggerBuilder内部会自动使用CompositeHandler
     let logger = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
-        .add_custom_handler(composite)
-        .build()?;
-
-    Ok(())
+        .add_terminal()    // 添加终端输出
+        .add_file(file_config)  // 添加文件输出
+        .build();
 }
 ```
 
@@ -238,7 +225,7 @@ pub struct FileConfig {
     pub log_dir: PathBuf,              // 日志目录
     pub max_file_size: u64,             // 最大文件大小
     pub max_compressed_files: usize,    // 最大压缩文件数
-    pub compression_level: u8,          // 压缩级别
+    pub compression_level: u32,         // 压缩级别
     pub min_compress_threads: usize,    // 最小压缩线程数
     pub skip_server_logs: bool,        // 是否跳过服务器日志
     pub is_raw: bool,                  // 是否为原始日志
@@ -352,7 +339,8 @@ parking_lot = "0.12"
 
 项目包含完整的示例代码：
 
-- `examples/basic_usage.rs` - 基本使用示例
-- `examples/macro_example.rs` - 日志宏使用示例
-- `examples/format_example.rs` - 格式配置示例
+- `examples/basic_usage.rs` - 基础使用示例
+- `examples/composite_handler.rs` - 多输出处理器示例
+- `examples/file_rotation.rs` - 文件轮转功能测试
+- `examples/pm2_style_logging.rs` - PM2风格多文件日志管理
 - `tests/performance_comparison.rs` - 性能对比测试
