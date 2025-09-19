@@ -8,6 +8,8 @@
 [![License](https://img.shields.io/crates/l/rat_logger.svg)](https://crates.io/crates/rat_logger)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://rust-lang.org)
 
+[🇨🇳 中文](README.md) | [🇺🇸 English](README_en.md) | [🇯🇵 日本語](README_ja.md)
+
 rat_logger 是一个用 Rust 编写的高性能、线程安全的日志库，采用生产者-消费者架构和异步写入机制，提供卓越的性能表现和灵活的配置选项。
 
 ## 特性
