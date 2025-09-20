@@ -583,7 +583,7 @@ dependencies = [
 
 [[package]]
 name = "rat_logger"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "arc-swap",
  "async-trait",
