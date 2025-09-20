@@ -27,6 +27,44 @@ pub struct TermConfig {
     pub color: Option<ColorConfig>,
 }
 
+impl TermConfig {
+    /// 验证配置的有效性
+    pub fn validate(&self) -> Result<(), String> {
+        // 验证颜色配置一致性
+        if !self.enable_color && self.color.is_some() {
+            return Err(format!("配置冲突: 颜色配置被提供但 enable_color 为 false。如果要启用颜色，请设置 enable_color = true；如果要禁用颜色，请移除 color 配置。"));
+        }
+
+        // 验证批量大小合理性
+        if self.batch_size == 0 {
+            return Err("配置错误: 批量大小不能为 0".to_string());
+        }
+        if self.batch_size > 1024 * 1024 {
+            return Err("配置错误: 批量大小过大 (最大 1MB)".to_string());
+        }
+
+        // 验证刷新间隔
+        if self.flush_interval_ms == 0 {
+            return Err("配置错误: 刷新间隔不能为 0".to_string());
+        }
+        if self.flush_interval_ms > 60000 {
+            return Err("配置错误: 刷新间隔过长 (最大 60秒)".to_string());
+        }
+
+        // 验证格式配置（如果提供）
+        if let Some(format_config) = &self.format {
+            if format_config.format_template.is_empty() {
+                return Err("配置错误: 格式模板不能为空".to_string());
+            }
+            if format_config.timestamp_format.is_empty() {
+                return Err("配置错误: 时间戳格式不能为空".to_string());
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl Default for TermConfig {
     fn default() -> Self {
         Self {
@@ -59,29 +97,41 @@ impl TermProcessor {
 
     /// 使用配置创建终端处理器
     pub fn with_config(config: TermConfig) -> Self {
-        let formatter: Box<dyn Fn(&mut dyn Write, &Record) -> io::Result<()> + Send + Sync> = match (&config.format, &config.color) {
-            (Some(format_config), Some(color_config)) => {
-                let format_config = format_config.clone();
-                let color_config = color_config.clone();
-                Box::new(move |buf, record| {
-                    format_with_color(buf, record, &format_config, &color_config)
-                })
+        // 验证配置，如果失败则直接panic，让用户明确知道配置问题
+        if let Err(e) = config.validate() {
+            panic!("TermConfig 验证失败: {}\n请检查您的配置并修复上述问题后再重试。", e);
+        }
+
+        let formatter: Box<dyn Fn(&mut dyn Write, &Record) -> io::Result<()> + Send + Sync> = {
+            // 检查是否启用颜色且有颜色配置
+            let use_color = config.enable_color && config.color.is_some();
+
+            match (&config.format, use_color) {
+                (Some(format_config), true) => {
+                    // 有格式配置且启用颜色
+                    let format_config = format_config.clone();
+                    let color_config = config.color.as_ref().unwrap().clone();
+                    Box::new(move |buf, record| {
+                        format_with_color(buf, record, &format_config, &color_config)
+                    })
+                }
+                (Some(format_config), false) => {
+                    // 有格式配置但不启用颜色
+                    let format_config = format_config.clone();
+                    Box::new(move |buf, record| {
+                        format_with_config(buf, record, &format_config)
+                    })
+                }
+                (None, true) => {
+                    // 无格式配置但启用颜色
+                    let default_format_config = FormatConfig::default();
+                    let color_config = config.color.as_ref().unwrap().clone();
+                    Box::new(move |buf, record| {
+                        format_with_color(buf, record, &default_format_config, &color_config)
+                    })
+                }
+                (None, false) => Box::new(default_format),
             }
-            (Some(format_config), None) => {
-                let format_config = format_config.clone();
-                Box::new(move |buf, record| {
-                    format_with_config(buf, record, &format_config)
-                })
-            }
-            (None, Some(color_config)) => {
-                let color_config = color_config.clone();
-                // 使用默认格式配置，但应用颜色
-                let default_format_config = FormatConfig::default();
-                Box::new(move |buf, record| {
-                    format_with_color(buf, record, &default_format_config, &color_config)
-                })
-            }
-            (None, None) => Box::new(default_format),
         };
 
         let processor = Self {

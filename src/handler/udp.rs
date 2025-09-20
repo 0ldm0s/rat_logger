@@ -101,6 +101,45 @@ pub struct UdpConfig {
     pub pool_size: usize,
 }
 
+impl UdpConfig {
+    /// 验证配置的有效性
+    pub fn validate(&self) -> Result<(), String> {
+        // 验证重试次数
+        if self.retry_count == 0 {
+            return Err("配置错误: 重试次数不能为 0".to_string());
+        }
+        if self.retry_count > 10 {
+            return Err("配置错误: 重试次数过多 (最大 10次)".to_string());
+        }
+
+        // 验证批量大小
+        if self.batch_size == 0 {
+            return Err("配置错误: 批量大小不能为 0".to_string());
+        }
+        if self.batch_size > 1024 * 1024 {
+            return Err("配置错误: 批量大小过大 (最大 1MB)".to_string());
+        }
+
+        // 验证刷新间隔
+        if self.flush_interval_ms == 0 {
+            return Err("配置错误: 刷新间隔不能为 0".to_string());
+        }
+        if self.flush_interval_ms > 60000 {
+            return Err("配置错误: 刷新间隔过长 (最大 60秒)".to_string());
+        }
+
+        // 验证连接池大小
+        if self.pool_size == 0 {
+            return Err("配置错误: 连接池大小不能为 0".to_string());
+        }
+        if self.pool_size > 100 {
+            return Err("配置错误: 连接池大小过大 (最大 100)".to_string());
+        }
+
+        Ok(())
+    }
+}
+
 impl Default for UdpConfig {
     fn default() -> Self {
         Self {
@@ -134,6 +173,11 @@ impl UdpProcessor {
 
     /// 使用UDP配置创建处理器
     pub fn with_config(config: UdpConfig) -> Self {
+        // 验证配置，如果失败则直接panic，让用户明确知道配置问题
+        if let Err(e) = config.validate() {
+            panic!("UdpConfig 验证失败: {}\n请检查您的配置并修复上述问题后再重试。", e);
+        }
+
         Self {
             config,
             pool: Arc::new(UdpConnectionPool::new()),

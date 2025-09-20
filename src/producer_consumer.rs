@@ -20,6 +20,42 @@ pub struct BatchConfig {
     pub buffer_size: usize,
 }
 
+impl BatchConfig {
+    /// 验证配置的有效性
+    pub fn validate(&self) -> Result<(), String> {
+        // 验证批量大小
+        if self.batch_size == 0 {
+            return Err("配置错误: 批量大小不能为 0".to_string());
+        }
+        if self.batch_size > 1024 * 1024 {
+            return Err("配置错误: 批量大小过大 (最大 1MB)".to_string());
+        }
+
+        // 验证批量间隔
+        if self.batch_interval_ms == 0 {
+            return Err("配置错误: 批量间隔不能为 0".to_string());
+        }
+        if self.batch_interval_ms > 60000 {
+            return Err("配置错误: 批量间隔过长 (最大 60秒)".to_string());
+        }
+
+        // 验证缓冲区大小
+        if self.buffer_size == 0 {
+            return Err("配置错误: 缓冲区大小不能为 0".to_string());
+        }
+        if self.buffer_size > 10 * 1024 * 1024 {
+            return Err("配置错误: 缓冲区大小过大 (最大 10MB)".to_string());
+        }
+
+        // 验证缓冲区大小与批量大小的关系
+        if self.buffer_size < self.batch_size {
+            return Err(format!("配置错误: 缓冲区大小 ({}) 必须大于等于批量大小 ({})", self.buffer_size, self.batch_size));
+        }
+
+        Ok(())
+    }
+}
+
 impl Default for BatchConfig {
     fn default() -> Self {
         Self {
@@ -79,6 +115,11 @@ impl ProcessorWorker {
     where
         P: LogProcessor + Send + 'static,
     {
+        // 验证配置，如果失败则直接panic，让用户明确知道配置问题
+        if let Err(e) = config.validate() {
+            panic!("BatchConfig 验证失败: {}\n请检查您的配置并修复上述问题后再重试。", e);
+        }
+
         let (sender, receiver) = unbounded();
         let config_clone = config.clone();
         let processor_name = processor.name();

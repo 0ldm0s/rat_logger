@@ -179,6 +179,16 @@ impl LoggerBuilder {
 
     /// 构建日志器
     pub fn build(self) -> LoggerCore {
+        // 验证批量配置
+        if let Err(e) = self.batch_config.validate() {
+            panic!("LoggerBuilder 批量配置验证失败: {}\n请检查您的批量配置并修复上述问题后再重试。", e);
+        }
+
+        // 验证是否有处理器
+        if self.processor_manager.is_empty() {
+            panic!("配置错误: 必须至少添加一个处理器（终端、文件或UDP）");
+        }
+
         LoggerCore::new(self.level, self.processor_manager, self.dev_mode)
     }
 

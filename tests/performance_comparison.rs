@@ -316,7 +316,7 @@ fn test_basic_functionality() {
     let file_config = FileConfig {
         log_dir: test_dir.clone(),
         max_file_size: 1024 * 1024,
-        max_compressed_files: 1,
+        max_compressed_files: 0, // 不压缩，设置为0
         compression_level: 0,
         min_compress_threads: 0,
         skip_server_logs: false,

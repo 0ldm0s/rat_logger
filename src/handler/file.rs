@@ -84,6 +84,11 @@ impl FileProcessor {
 
     /// 使用配置创建文件处理器
     pub fn with_config(config: FileProcessorConfig) -> Self {
+        // 验证配置，如果失败则直接panic，让用户明确知道配置问题
+        if let Err(e) = config.file_config.validate() {
+            panic!("FileConfig 验证失败: {}\n请检查您的配置并修复上述问题后再重试。", e);
+        }
+
         let writer = Arc::new(Mutex::new(
             LogWriter::new(&config.file_config.log_dir, config.file_config.max_file_size as usize)
                 .unwrap_or_else(|_| LogWriter::create_default(&config.file_config.log_dir, config.file_config.max_file_size as usize))
@@ -100,9 +105,11 @@ impl FileProcessor {
             Self::worker_thread(writer_clone, rotator_clone, receiver, config_clone);
         });
 
-        // 根据配置设置格式化器
+        // 根据配置设置格式化器，原始模式下使用原始格式
         let formatter: Box<dyn Fn(&mut dyn Write, &Record) -> io::Result<()> + Send + Sync> =
-            if let Some(format_config) = &config.file_config.format {
+            if config.file_config.is_raw {
+                Box::new(Self::raw_format)
+            } else if let Some(format_config) = &config.file_config.format {
                 let format_config = format_config.clone();
                 Box::new(move |buf, record| {
                     Self::format_with_config(buf, record, &format_config)
@@ -659,6 +666,11 @@ impl FileProcessor {
             record.line.unwrap_or(0),
             record.args
         )
+    }
+
+    /// 原始格式化函数 - 直接输出日志消息，不添加任何格式
+    fn raw_format(buf: &mut dyn Write, record: &Record) -> io::Result<()> {
+        writeln!(buf, "{}", record.args)
     }
 
     /// 设置自定义格式化函数

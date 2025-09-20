@@ -220,6 +220,61 @@ pub struct FileConfig {
     pub format: Option<FormatConfig>, // 格式配置
 }
 
+impl FileConfig {
+    /// 验证配置的有效性
+    pub fn validate(&self) -> Result<(), String> {
+        // 验证文件大小
+        if self.max_file_size == 0 {
+            return Err("配置错误: 最大文件大小不能为 0".to_string());
+        }
+        if self.max_file_size > 1024 * 1024 * 1024 {
+            return Err("配置错误: 最大文件大小过大 (最大 1GB)".to_string());
+        }
+
+        // 验证压缩文件数量
+        if self.max_compressed_files > 1000 {
+            return Err("配置错误: 最大压缩文件数量过多 (最大 1000)".to_string());
+        }
+
+        // 验证压缩级别
+        if self.compression_level > 9 {
+            return Err("配置错误: 压缩级别必须在 0-9 之间".to_string());
+        }
+
+        // 验证压缩线程数
+        if self.min_compress_threads > 32 {
+            return Err("配置错误: 最小压缩线程数过多 (最大 32)".to_string());
+        }
+
+        // 如果启用压缩，则验证相关参数
+        if self.compression_level > 0 || self.max_compressed_files > 0 {
+            if self.max_compressed_files == 0 {
+                return Err("配置错误: 启用压缩时最大压缩文件数量不能为 0".to_string());
+            }
+            if self.min_compress_threads == 0 {
+                return Err("配置错误: 启用压缩时最小压缩线程数不能为 0".to_string());
+            }
+        }
+
+        // 验证格式配置（如果提供）
+        if let Some(format_config) = &self.format {
+            if format_config.format_template.is_empty() {
+                return Err("配置错误: 格式模板不能为空".to_string());
+            }
+            if format_config.timestamp_format.is_empty() {
+                return Err("配置错误: 时间戳格式不能为空".to_string());
+            }
+        }
+
+        // 验证原始模式冲突
+        if self.is_raw && self.format.is_some() {
+            return Err("配置冲突: 原始模式 (is_raw) 下不能指定格式配置。原始模式将直接输出原始日志内容。".to_string());
+        }
+
+        Ok(())
+    }
+}
+
 impl Default for FileConfig {
     fn default() -> Self {
         Self {
