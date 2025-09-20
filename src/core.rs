@@ -1,14 +1,12 @@
 //! 日志核心模块 - 完全异步的生产者消费者架构
 
 use std::sync::Arc;
-use crossbeam_channel::{Sender, Receiver, unbounded};
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread;
 use std::sync::Mutex;
 
 use crate::config::{LevelFilter, Record};
-use crate::producer_consumer::{LogProcessor, ProcessorManager, BatchConfig};
+use crate::producer_consumer::{ProcessorManager, BatchConfig};
 
 /// 全局日志器实例
 pub static LOGGER: Lazy<Mutex<Option<Arc<dyn Logger>>>> = Lazy::new(|| Mutex::new(None));

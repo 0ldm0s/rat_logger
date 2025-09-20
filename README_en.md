@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Custom Handler Configuration
 
 ```rust
-use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, FormatConfig, LevelStyle, ColorConfig, TermHandler};
+use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, FormatConfig, LevelStyle, ColorConfig};
 
 fn main() {
     // Create format configuration
@@ -119,6 +119,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     let logger = LoggerBuilder::new()
@@ -163,6 +164,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     // Create multi-output logger (terminal + file)
@@ -240,11 +242,12 @@ pub struct FileConfig {
     pub log_dir: PathBuf,              // Log directory
     pub max_file_size: u64,             // Maximum file size
     pub max_compressed_files: usize,    // Maximum compressed files
-    pub compression_level: u32,         // Compression level
+    pub compression_level: u8,          // Compression level (1-9)
     pub min_compress_threads: usize,    // Minimum compression threads
     pub skip_server_logs: bool,        // Whether to skip server logs
     pub is_raw: bool,                  // Whether it's raw log
     pub compress_on_drop: bool,         // Whether to compress on exit
+    pub format: Option<FormatConfig>,  // Format configuration
 }
 ```
 
@@ -386,8 +389,11 @@ Welcome to submit Issues and Pull Requests to improve rat_logger.
 
 The project includes complete example code:
 
-- `examples/basic_usage.rs` - Basic usage example
-- `examples/composite_handler.rs` - Multi-output handler example
-- `examples/file_rotation.rs` - File rotation functionality test
+- `examples/basic_usage.rs` - Basic usage example, demonstrates multiple output methods
+- `examples/composite_handler.rs` - Multi-output handler example, terminal + file simultaneous output
+- `examples/file_rotation.rs` - File rotation and compression functionality test
+- `examples/term_format_example.rs` - Terminal format configuration and color settings example
+- `examples/file_format_example.rs` - File format configuration example, including JSON format
+- `examples/macro_format_example.rs` - Macro and format configuration combined usage example
+- `examples/macro_example.rs` - Logging macro usage example, supports global initialization
 - `examples/pm2_style_logging.rs` - PM2-style multi-file log management
-- `tests/performance_comparison.rs` - Performance comparison tests

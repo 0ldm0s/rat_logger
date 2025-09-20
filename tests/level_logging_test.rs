@@ -8,122 +8,96 @@ use std::sync::Arc;
 
 #[test]
 fn test_level_logging() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== rat_logger 按级别输出日志示例 ===\n");
+    println!("=== rat_logger 级别过滤直观演示 ===");
+    println!("🎯 该测试清晰展示不同日志级别过滤器的效果\n");
 
-    // 首先测试直接使用Logger是否正常工作
-    println!("0. 测试直接使用Logger：");
-    let logger = LoggerBuilder::new()
-        .with_level(LevelFilter::Trace)
-        .with_dev_mode(true) // 启用开发模式确保日志立即输出
-        .add_terminal()
-        .build();
+    println!("📋 日志级别优先级（从高到低）:");
+    println!("   ERROR > WARN > INFO > DEBUG > TRACE > OFF");
+    println!("💡 只有优先级 >= 过滤器级别的消息才会显示\n");
 
-    let record = Record {
-        metadata: Arc::new(Metadata {
-            level: Level::Info,
-            target: "test".to_string(),
-            auth_token: None,
-            app_id: Some("test".to_string()),
-        }),
-        args: "直接使用Logger的测试日志".to_string(),
-        module_path: Some("test".to_string()),
-        file: Some("test.rs".to_string()),
-        line: Some(1),
-    };
-    logger.log(&record);
-    println!("直接调用Logger.log()完成\n");
+    // 测试所有过滤级别
+    let filter_configs = [
+        (LevelFilter::Error, "🔴 ERROR级别过滤器", "只显示ERROR消息"),
+        (LevelFilter::Warn, "🟠 WARN级别过滤器", "显示WARN、ERROR消息"),
+        (LevelFilter::Info, "🟢 INFO级别过滤器", "显示INFO、WARN、ERROR消息"),
+        (LevelFilter::Debug, "🔵 DEBUG级别过滤器", "显示DEBUG、INFO、WARN、ERROR消息"),
+        (LevelFilter::Trace, "🟣 TRACE级别过滤器", "显示所有级别消息"),
+        (LevelFilter::Off, "⚫ OFF级别过滤器", "不显示任何消息"),
+    ];
 
-    // 测试宏是否能工作 - 只初始化一次
-    println!("1. 测试宏输出（Trace级别）：");
-    let _ = LoggerBuilder::new()
-        .with_level(LevelFilter::Trace)
-        .with_dev_mode(true) // 启用开发模式确保日志立即输出
-        .add_terminal()
-        .init();
+    // 要发送的测试消息
+    let test_messages = [
+        (Level::Error, "🚨 ERROR - 系统错误"),
+        (Level::Warn, "⚠️  WARN - 警告信息"),
+        (Level::Info, "ℹ️  INFO - 一般信息"),
+        (Level::Debug, "🔍 DEBUG - 调试信息"),
+        (Level::Trace, "📝 TRACE - 详细跟踪"),
+    ];
 
-    println!("现在测试宏输出：");
-    rat_logger::error!("宏 - Error日志");
-    rat_logger::warn!("宏 - Warn日志");
-    rat_logger::info!("宏 - Info日志");
-    rat_logger::debug!("宏 - Debug日志");
-    rat_logger::trace!("宏 - Trace日志");
+    for (filter_level, title, description) in filter_configs {
+        println!("╔══════════════════════════════════════════════════════════════╗");
+        println!("║ {}║", title);
+        println!("║ {}║", description);
+        println!("╚══════════════════════════════════════════════════════════════╝");
 
-    // 测试不同的级别设置 - 使用独立的logger而不是全局初始化
-    println!("\n2. 测试不同级别（使用独立Logger）：");
+        // 使用LoggerBuilder创建过滤器
+        let logger = LoggerBuilder::new()
+            .with_level(filter_level)
+            .with_dev_mode(true) // 确保立即输出
+            .add_terminal()
+            .build();
 
-    // Debug级别
-    println!("Debug级别：");
-    let debug_logger = LoggerBuilder::new()
-        .with_level(LevelFilter::Debug)
-        .with_dev_mode(true) // 启用开发模式确保日志立即输出
-        .add_terminal()
-        .build();
+        println!("📤 发送测试消息到 {:?} 过滤器:", filter_level);
 
-    log_with_logger(&debug_logger, Level::Error, "Debug级别 - Error");
-    log_with_logger(&debug_logger, Level::Warn, "Debug级别 - Warn");
-    log_with_logger(&debug_logger, Level::Info, "Debug级别 - Info");
-    log_with_logger(&debug_logger, Level::Debug, "Debug级别 - Debug");
-    log_with_logger(&debug_logger, Level::Trace, "Debug级别 - Trace（不应该显示）");
+        for (msg_level, message) in test_messages {
+            let will_show = match (filter_level, msg_level) {
+                (LevelFilter::Off, _) => false,
+                (LevelFilter::Error, Level::Error) => true,
+                (LevelFilter::Error, _) => false,
+                (LevelFilter::Warn, level) if level as u32 >= LevelFilter::Warn as u32 => true,
+                (LevelFilter::Warn, _) => false,
+                (LevelFilter::Info, level) if level as u32 >= LevelFilter::Info as u32 => true,
+                (LevelFilter::Info, _) => false,
+                (LevelFilter::Debug, level) if level as u32 >= LevelFilter::Debug as u32 => true,
+                (LevelFilter::Debug, _) => false,
+                (LevelFilter::Trace, _) => true,
+                _ => false,
+            };
 
-    // Info级别
-    println!("\nInfo级别：");
-    let info_logger = LoggerBuilder::new()
-        .with_level(LevelFilter::Info)
-        .with_dev_mode(true) // 启用开发模式确保日志立即输出
-        .add_terminal()
-        .build();
+            if will_show {
+                println!("  ✅ 将显示: {}", message);
+            } else {
+                println!("  ❌ 将过滤: {}", message);
+            }
 
-    log_with_logger(&info_logger, Level::Error, "Info级别 - Error");
-    log_with_logger(&info_logger, Level::Warn, "Info级别 - Warn");
-    log_with_logger(&info_logger, Level::Info, "Info级别 - Info");
-    log_with_logger(&info_logger, Level::Debug, "Info级别 - Debug（不应该显示）");
-    log_with_logger(&info_logger, Level::Trace, "Info级别 - Trace（不应该显示）");
+            log_with_logger(&logger, msg_level, message);
+        }
 
-    // Warn级别
-    println!("\nWarn级别：");
-    let warn_logger = LoggerBuilder::new()
-        .with_level(LevelFilter::Warn)
-        .with_dev_mode(true) // 启用开发模式确保日志立即输出
-        .add_terminal()
-        .build();
+        println!("  ──────────────────────────────────────────────────────────");
+        // 等待当前过滤器处理完成
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 
-    log_with_logger(&warn_logger, Level::Error, "Warn级别 - Error");
-    log_with_logger(&warn_logger, Level::Warn, "Warn级别 - Warn");
-    log_with_logger(&warn_logger, Level::Info, "Warn级别 - Info（不应该显示）");
-    log_with_logger(&warn_logger, Level::Debug, "Warn级别 - Debug（不应该显示）");
-    log_with_logger(&warn_logger, Level::Trace, "Warn级别 - Trace（不应该显示）");
+    println!("\n🎓 LoggerBuilder使用总结:");
+    println!("🔧 LoggerBuilder::new()");
+    println!("   .with_level(LevelFilter::Error)  // 最严格，只显示错误");
+    println!("   .with_level(LevelFilter::Info)   // 生产环境推荐");
+    println!("   .with_level(LevelFilter::Debug)  // 开发环境推荐");
+    println!("   .with_level(LevelFilter::Trace)  // 最详细，调试用");
+    println!("   .with_dev_mode(true)             // 开发模式，立即输出");
+    println!("   .add_terminal()                  // 添加终端输出");
+    println!("   .build()                         // 构建日志器");
 
-    // Error级别
-    println!("\nError级别：");
-    let error_logger = LoggerBuilder::new()
-        .with_level(LevelFilter::Error)
-        .with_dev_mode(true) // 启用开发模式确保日志立即输出
-        .add_terminal()
-        .build();
+    println!("\n🏗️  完整示例:");
+    println!("```rust");
+    println!("let logger = LoggerBuilder::new()");
+    println!("    .with_level(LevelFilter::Info)");
+    println!("    .with_dev_mode(true)");
+    println!("    .add_terminal()");
+    println!("    .build();");
+    println!("```");
 
-    log_with_logger(&error_logger, Level::Error, "Error级别 - Error");
-    log_with_logger(&error_logger, Level::Warn, "Error级别 - Warn（不应该显示）");
-    log_with_logger(&error_logger, Level::Info, "Error级别 - Info（不应该显示）");
-    log_with_logger(&error_logger, Level::Debug, "Error级别 - Debug（不应该显示）");
-    log_with_logger(&error_logger, Level::Trace, "Error级别 - Trace（不应该显示）");
-
-    // Off级别
-    println!("\nOff级别：");
-    let off_logger = LoggerBuilder::new()
-        .with_level(LevelFilter::Off)
-        .with_dev_mode(true) // 启用开发模式确保日志立即输出
-        .add_terminal()
-        .build();
-
-    log_with_logger(&off_logger, Level::Error, "Off级别 - Error（不应该显示）");
-    log_with_logger(&off_logger, Level::Warn, "Off级别 - Warn（不应该显示）");
-    log_with_logger(&off_logger, Level::Info, "Off级别 - Info（不应该显示）");
-    log_with_logger(&off_logger, Level::Debug, "Off级别 - Debug（不应该显示）");
-    log_with_logger(&off_logger, Level::Trace, "Off级别 - Trace（不应该显示）");
-
-    println!("\n=== 示例完成 ===");
-    println!("推荐使用LoggerBuilder::new().with_level(level).add_terminal().init()");
-    println!("而不是使用已弃用的init()或init_with_level()函数");
+    println!("\n✅ 级别过滤演示完成");
 
     Ok(())
 }

@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### カスタムハンドラー設定
 
 ```rust
-use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, FormatConfig, LevelStyle, ColorConfig, TermHandler};
+use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, FormatConfig, LevelStyle, ColorConfig};
 
 fn main() {
     // フォーマット設定を作成
@@ -119,6 +119,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     let logger = LoggerBuilder::new()
@@ -163,6 +164,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     // 複数出力ロガーを作成（ターミナル + ファイル）
@@ -240,11 +242,12 @@ pub struct FileConfig {
     pub log_dir: PathBuf,              // ログディレクトリ
     pub max_file_size: u64,             // 最大ファイルサイズ
     pub max_compressed_files: usize,    // 最大圧縮ファイル数
-    pub compression_level: u32,         // 圧縮レベル
+    pub compression_level: u8,          // 圧縮レベル (1-9)
     pub min_compress_threads: usize,    // 最小圧縮スレッド数
     pub skip_server_logs: bool,        // サーバーログをスキップするか
     pub is_raw: bool,                  // 生ログかどうか
     pub compress_on_drop: bool,         // 終了時に圧縮するか
+    pub format: Option<FormatConfig>,  // フォーマット設定
 }
 ```
 
@@ -386,8 +389,11 @@ rat_loggerを改善するためにIssueやPull Requestの提出を歓迎しま�
 
 プロジェクトには完全なサンプルコードが含まれています：
 
-- `examples/basic_usage.rs` - 基本的な使用例
-- `examples/composite_handler.rs` - 複数出力ハンドラーの例
-- `examples/file_rotation.rs` - ファイルローテーション機能テスト
+- `examples/basic_usage.rs` - 基本的な使用例、複数の出力方法を実演
+- `examples/composite_handler.rs` - 複数出力ハンドラーの例、ターミナル+ファイル同時出力
+- `examples/file_rotation.rs` - ファイルローテーションと圧縮機能テスト
+- `examples/term_format_example.rs` - ターミナルフォーマット設定とカラー設定例
+- `examples/file_format_example.rs` - ファイルフォーマット設定例、JSONフォーマットを含む
+- `examples/macro_format_example.rs` - マクロとフォーマット設定の組み合わせ使用例
+- `examples/macro_example.rs` - ロギングマクロ使用例、グローバル初期化をサポート
 - `examples/pm2_style_logging.rs` - PM2スタイルの複数ファイルログ管理
-- `tests/performance_comparison.rs` - パフォーマンス比較テスト

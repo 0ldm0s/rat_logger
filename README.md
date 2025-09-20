@@ -81,6 +81,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     let prod_file_logger = LoggerBuilder::new()
@@ -111,6 +112,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     let logger = LoggerBuilder::new()
@@ -157,6 +159,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        format: None,
     };
 
     // 创建多输出日志器（终端 + 文件）
@@ -254,11 +257,12 @@ pub struct FileConfig {
     pub log_dir: PathBuf,              // 日志目录
     pub max_file_size: u64,             // 最大文件大小
     pub max_compressed_files: usize,    // 最大压缩文件数
-    pub compression_level: u32,         // 压缩级别
+    pub compression_level: u8,          // 压缩级别
     pub min_compress_threads: usize,    // 最小压缩线程数
     pub skip_server_logs: bool,        // 是否跳过服务器日志
     pub is_raw: bool,                  // 是否为原始日志
     pub compress_on_drop: bool,         // 退出时是否压缩
+    pub format: Option<FormatConfig>,  // 格式配置
 }
 ```
 
@@ -270,6 +274,108 @@ pub struct NetworkConfig {
     pub server_port: u16,       // 服务器端口
     pub auth_token: String,     // 认证令牌
     pub app_id: String,         // 应用标识
+}
+```
+
+### 终端配置 (TermConfig)
+
+```rust
+pub struct TermConfig {
+    pub enable_color: bool,          // 是否启用颜色
+    pub enable_async: bool,          // 是否启用异步
+    pub batch_size: usize,           // 批量大小
+    pub flush_interval_ms: u64,      // 刷新间隔（毫秒）
+    pub format: Option<FormatConfig>, // 格式配置
+    pub color: Option<ColorConfig>,   // 颜色配置
+}
+```
+
+## 格式和颜色使用示例
+
+### 自定义终端格式
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, FormatConfig, ColorConfig};
+
+fn main() {
+    // 创建格式配置
+    let format_config = FormatConfig {
+        timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
+        level_style: rat_logger::LevelStyle {
+            error: "ERROR".to_string(),
+            warn: "WARN ".to_string(),
+            info: "INFO ".to_string(),
+            debug: "DEBUG".to_string(),
+            trace: "TRACE".to_string(),
+        },
+        format_template: "[{level}] {timestamp} {target}:{line} - {message}".to_string(),
+    };
+
+    // 创建颜色配置
+    let color_config = ColorConfig {
+        error: "\x1b[91m".to_string(),      // 亮红色
+        warn: "\x1b[93m".to_string(),       // 亮黄色
+        info: "\x1b[92m".to_string(),       // 亮绿色
+        debug: "\x1b[96m".to_string(),      // 亮青色
+        trace: "\x1b[95m".to_string(),      // 亮紫色
+        timestamp: "\x1b[90m".to_string(),  // 深灰色
+        target: "\x1b[94m".to_string(),     // 亮蓝色
+        file: "\x1b[95m".to_string(),      // 亮紫色
+        message: "\x1b[97m".to_string(),     // 亮白色
+    };
+
+    // 创建带配置的终端处理器
+    let logger = LoggerBuilder::new()
+        .with_level(LevelFilter::Debug)
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig {
+            enable_color: true,
+            enable_async: true,
+            batch_size: 8192,
+            flush_interval_ms: 100,
+            format: Some(format_config),
+            color: Some(color_config),
+        })
+        .build();
+}
+```
+
+### 自定义文件格式
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, FormatConfig};
+use std::path::PathBuf;
+
+fn main() {
+    // 创建JSON格式配置
+    let json_format = FormatConfig {
+        timestamp_format: "%Y-%m-%dT%H:%M:%S%.3fZ".to_string(),
+        level_style: rat_logger::LevelStyle {
+            error: "error".to_string(),
+            warn: "warn".to_string(),
+            info: "info".to_string(),
+            debug: "debug".to_string(),
+            trace: "trace".to_string(),
+        },
+        format_template: r#"{{"timestamp":"{timestamp}","level":"{level}","target":"{target}","message":"{message}"}}"#.to_string(),
+    };
+
+    // 创建带格式配置的文件处理器
+    let file_config = FileConfig {
+        log_dir: PathBuf::from("./logs"),
+        max_file_size: 10 * 1024 * 1024,  // 10MB
+        max_compressed_files: 5,
+        compression_level: 6,
+        min_compress_threads: 2,
+        skip_server_logs: false,
+        is_raw: false,
+        compress_on_drop: false,
+        format: Some(json_format),  // 使用自定义格式
+    };
+
+    let logger = LoggerBuilder::new()
+        .with_level(LevelFilter::Info)
+        .add_file(file_config)
+        .build();
 }
 ```
 
@@ -360,41 +466,7 @@ rat_logger = "0.2.0"
 
 ## 更新日志
 
-### v0.2.3
-- **架构重构**: 完全重写为异步广播架构，移除旧的同步架构
-- **开发模式**: 新增开发模式功能，便于调试和学习
-- **性能优化**: 终端处理器性能提升6倍，大幅改善整体性能
-- **LoggerBuilder改进**: 统一的构建器接口，支持更灵活的配置
-- **示例更新**: 所有示例都添加开发模式和生产环境使用警告
-- **文档完善**: 更新README和使用指南，添加多语言支持
-
-### v0.2.2
-- 修复编译错误和依赖问题
-- 改进错误处理机制
-- 优化内存使用
-
-### v0.2.1
-- 修复编译错误和依赖问题
-- 改进错误处理机制
-- 优化内存使用
-
-### v0.2.0
-- 升级到 Rust 2024 Edition
-- 更新依赖项到最新版本
-- 性能优化和稳定性改进
-- 发布到 crates.io
-- 改进文档和示例
-
-### v0.1.0
-- 初始版本发布
-- 生产者-消费者架构实现
-- 支持基本日志记录功能
-- 文件和网络输出支持
-- LZ4 压缩功能
-- 线程安全保证
-- 日志宏支持
-- 分层配置系统
-- 跨平台优化
+详细的版本更新记录请查看 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 示例代码
 
@@ -403,9 +475,10 @@ rat_logger = "0.2.0"
 - `examples/basic_usage.rs` - 基础使用示例，展示多种输出方式
 - `examples/composite_handler.rs` - 多输出处理器示例，终端+文件同时输出
 - `examples/file_rotation.rs` - 文件轮转和压缩功能测试
-- `examples/format_example.rs` - 格式配置和颜色设置示例
+- `examples/term_format_example.rs` - 终端格式配置和颜色设置示例
+- `examples/file_format_example.rs` - 文件格式配置示例，包括JSON格式
+- `examples/macro_format_example.rs` - 宏与格式配置结合使用示例
 - `examples/macro_example.rs` - 日志宏使用示例，支持全局初始化
 - `examples/pm2_style_logging.rs` - PM2风格多文件日志管理
-- `tests/level_logging_test.rs` - 日志级别过滤测试
 
 所有示例都启用了开发模式以确保日志立即输出。在生产环境中使用时，请移除 `with_dev_mode(true)` 配置以获得最佳性能。
