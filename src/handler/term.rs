@@ -359,14 +359,25 @@ pub fn format_with_color(buf: &mut dyn Write, record: &Record, format_config: &F
     // 重置颜色
     let reset_color = "\x1b[0m";
 
-    writeln!(
-        buf,
-        "{}{}{} {}{}{} {}{}{} {}{}{}:{} - {}",
-        color_config.timestamp, timestamp, reset_color,
-        level_color, level_text, reset_color,
-        color_config.target, record.metadata.target, reset_color,
-        color_config.file, record.file.as_deref().unwrap_or("unknown"), reset_color,
-        record.line.unwrap_or(0),
-        record.args
-    )
+    // 使用格式模板并应用颜色
+    let colored_timestamp = format!("{}{}{}", color_config.timestamp, timestamp, reset_color);
+    let colored_level = format!("{}{}{}", level_color, level_text, reset_color);
+    let colored_target = format!("{}{}{}", color_config.target, record.metadata.target, reset_color);
+    let colored_file = format!("{}{}{}", color_config.file, record.file.as_deref().unwrap_or("unknown"), reset_color);
+    let colored_line = format!("{}{}{}", color_config.file, record.line.unwrap_or(0), reset_color);
+    let colored_message = format!("{}{}{}", color_config.message, record.args, reset_color);
+
+    // 使用格式模板进行格式化
+    let mut formatted = format_config.format_template
+        .replace("{timestamp}", &colored_timestamp)
+        .replace("{level}", &colored_level)
+        .replace("{target}", &colored_target)
+        .replace("{file}", &colored_file)
+        .replace("{line}", &colored_line)
+        .replace("{message}", &colored_message);
+
+    // 处理格式模板中可能包含的冒号和分隔符
+    formatted = formatted.replace("}:", format!("{}:{}", reset_color, color_config.file).as_str());
+
+    writeln!(buf, "{}", formatted)
 }
