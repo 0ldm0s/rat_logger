@@ -73,7 +73,15 @@ impl TermProcessor {
                     format_with_config(buf, record, &format_config)
                 })
             }
-            (None, _) => Box::new(default_format),
+            (None, Some(color_config)) => {
+                let color_config = color_config.clone();
+                // 使用默认格式配置，但应用颜色
+                let default_format_config = FormatConfig::default();
+                Box::new(move |buf, record| {
+                    format_with_color(buf, record, &default_format_config, &color_config)
+                })
+            }
+            (None, None) => Box::new(default_format),
         };
 
         let processor = Self {
