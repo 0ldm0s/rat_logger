@@ -397,6 +397,19 @@ impl Default for ProcessorManager {
     }
 }
 
+impl Drop for ProcessorManager {
+    fn drop(&mut self) {
+        // 优雅地关闭所有工作线程
+        let _ = self.broadcast_shutdown();
+
+        // 给每个工作线程一些时间来清理资源
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // 清理工作线程
+        self.workers.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

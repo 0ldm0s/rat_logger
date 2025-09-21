@@ -235,6 +235,13 @@ pub fn set_logger_dev(logger: Arc<dyn Logger>) -> Result<(), SetLoggerError> {
     if guard.is_some() {
         eprintln!("⚠️  警告：重新初始化全局日志器（开发模式）");
         eprintln!("⚠️  此功能仅供开发使用，生产环境请确保只初始化一次日志器");
+
+        // 先清理旧的日志器，确保资源正确释放
+        if let Some(old_logger) = guard.take() {
+            drop(old_logger);
+            // 给旧日志器一些时间来清理资源
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
     *guard = Some(logger);
     Ok(())
