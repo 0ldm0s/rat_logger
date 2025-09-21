@@ -59,9 +59,9 @@ impl BatchConfig {
 impl Default for BatchConfig {
     fn default() -> Self {
         Self {
-            batch_size: 8192,           // 8KB
-            batch_interval_ms: 100,      // 100ms
-            buffer_size: 64 * 1024,     // 64KB
+            batch_size: 2048,           // 2KB - 更保守的批量大小确保可靠输出
+            batch_interval_ms: 25,       // 25ms - 更短的间隔确保及时输出
+            buffer_size: 16 * 1024,     // 16KB - 相应减小缓冲区大小
         }
     }
 }

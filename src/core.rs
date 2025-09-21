@@ -193,7 +193,7 @@ impl LoggerBuilder {
     }
 
     /// 构建并初始化全局日志器
-    pub fn init(self) -> Result<(), SetLoggerError> {
+    pub fn init_global_logger(self) -> Result<(), SetLoggerError> {
         let level = self.level;
         let is_dev_mode = self.dev_mode;
         let logger = Arc::new(self.build());
@@ -202,11 +202,29 @@ impl LoggerBuilder {
         if is_dev_mode || cfg!(debug_assertions) {
             set_logger_dev(logger)?;
         } else {
-            set_logger(logger)?;
+            // 生产模式：允许重新初始化以应对程序多次运行的情况
+            let _lock = LOGGER_LOCK.write().unwrap();
+            let mut guard = LOGGER.lock().unwrap();
+
+            // 如果已存在日志器，先清理再设置新的
+            if guard.is_some() {
+                let old_logger = guard.take().unwrap();
+                drop(old_logger);
+                // 给旧日志器一些时间来清理资源
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+
+            *guard = Some(logger);
         }
 
         set_max_level(level);
         Ok(())
+    }
+
+    /// 构建并初始化全局日志器（已弃用，请使用init_global_logger）
+    #[deprecated(since = "0.2.7", note = "请使用init_global_logger方法")]
+    pub fn init(self) -> Result<(), SetLoggerError> {
+        self.init_global_logger()
     }
 }
 

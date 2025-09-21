@@ -70,8 +70,8 @@ impl Default for TermConfig {
         Self {
             enable_color: true,
             enable_async: true,
-            batch_size: 8192,
-            flush_interval_ms: 100,
+            batch_size: 2048,      // 2KB - 更保守的批量大小确保可靠输出
+            flush_interval_ms: 25,  // 25ms - 更短的间隔确保及时输出
             format: None,
             color: None,
         }

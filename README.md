@@ -96,6 +96,106 @@ fn main() {
 - 开发模式会强制等待异步操作完成，虽然便于调试但会降低性能
 - 开发模式主要用于测试、示例和学习场景
 
+### 批量处理配置建议
+
+rat_logger使用批量处理机制来提高性能，但不同的应用场景需要不同的配置：
+
+#### 同步模式（推荐用于大多数应用）
+
+对于日志量不大且要求可靠输出的应用（如CLI工具、命令行应用）：
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
+
+fn main() {
+    let format_config = FormatConfig {
+        timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
+        level_style: rat_logger::LevelStyle::default(),
+        format_template: "{timestamp} [{level}] {message}".to_string(),
+    };
+
+    // 同步模式：确保日志立即输出
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Info)
+        .add_terminal_with_config(TermConfig {
+            enable_color: true,
+            enable_async: false,  // 同步模式
+            batch_size: 1,        // 同步模式下无意义
+            flush_interval_ms: 1, // 同步模式下无意义
+            format: Some(format_config),
+            color: None,
+        })
+        .init_global_logger()
+        .unwrap();
+}
+```
+
+#### 异步模式（高吞吐量应用）
+
+对于高并发、大日志量的生产环境应用：
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
+
+fn main() {
+    let format_config = FormatConfig {
+        timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
+        level_style: rat_logger::LevelStyle::default(),
+        format_template: "{timestamp} [{level}] {message}".to_string(),
+    };
+
+    // 异步模式：高性能批量处理
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Info)
+        .add_terminal_with_config(TermConfig {
+            enable_color: true,
+            enable_async: true,       // 异步模式
+            batch_size: 2048,         // 2KB批量大小
+            flush_interval_ms: 25,    // 25ms刷新间隔
+            format: Some(format_config),
+            color: None,
+        })
+        .init_global_logger()
+        .unwrap();
+}
+```
+
+#### 极端性能配置
+
+对于极端高吞吐量的场景（如日志聚合服务）：
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
+
+fn main() {
+    let format_config = FormatConfig {
+        timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
+        level_style: rat_logger::LevelStyle::default(),
+        format_template: "{timestamp} [{level}] {message}".to_string(),
+    };
+
+    // 极端性能配置
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Info)
+        .add_terminal_with_config(TermConfig {
+            enable_color: true,
+            enable_async: true,        // 异步模式
+            batch_size: 4096,          // 4KB批量大小
+            flush_interval_ms: 50,    // 50ms刷新间隔
+            format: Some(format_config),
+            color: None,
+        })
+        .init_global_logger()
+        .unwrap();
+}
+```
+
+**配置建议总结：**
+- **CLI工具/命令行应用**: 使用同步模式 (`enable_async: false`)
+- **Web服务/后台应用**: 使用默认异步配置 (2KB批量，25ms间隔)
+- **高吞吐量服务**: 使用较大批量配置 (4KB批量，50ms间隔)
+- **测试/开发环境**: 启用开发模式 (`with_dev_mode(true)`)
+
 ### 文件处理器配置
 
 ```rust
