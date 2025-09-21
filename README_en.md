@@ -177,6 +177,182 @@ fn main() {
 }
 ```
 
+## Batch Processing Configuration Guide
+
+rat_logger uses batch processing mechanisms to improve performance, but different application scenarios require different configurations:
+
+### Synchronous Mode (Recommended for Most Applications)
+
+For applications with low log volume that require reliable output (such as CLI tools, command-line applications):
+
+*⚠️ Performance data is for reference only, actual performance varies by hardware and environment*
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
+
+fn main() {
+    let format_config = FormatConfig {
+        timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
+        level_style: rat_logger::LevelStyle::default(),
+        format_template: "{timestamp} [{level}] {message}".to_string(),
+    };
+
+    // Synchronous mode: ensure immediate log output
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Info)
+        .add_terminal_with_config(TermConfig {
+            enable_color: true,
+            enable_async: false,  // Synchronous mode
+            batch_size: 1,        // Meaningless in synchronous mode
+            flush_interval_ms: 1, // Meaningless in synchronous mode
+            format: Some(format_config),
+            color: None,
+        })
+        .init_global_logger()
+        .unwrap();
+}
+```
+
+### Asynchronous Mode (High Throughput Applications)
+
+For high-concurrency, high-log-volume production environment applications:
+
+*⚠️ Performance data is for reference only, actual performance varies by hardware and environment*
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
+
+fn main() {
+    let format_config = FormatConfig {
+        timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
+        level_style: rat_logger::LevelStyle::default(),
+        format_template: "{timestamp} [{level}] {message}".to_string(),
+    };
+
+    // Asynchronous mode: high-performance batch processing
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Info)
+        .add_terminal_with_config(TermConfig {
+            enable_color: true,
+            enable_async: true,       // Asynchronous mode
+            batch_size: 2048,         // 2KB batch size
+            flush_interval_ms: 25,    // 25ms flush interval
+            format: Some(format_config),
+            color: None,
+        })
+        .init_global_logger()
+        .unwrap();
+}
+```
+
+### Extreme Performance Configuration
+
+For extreme high-throughput scenarios (such as log aggregation services):
+
+*⚠️ Performance data is for reference only, actual performance varies by hardware and environment*
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
+
+fn main() {
+    let format_config = FormatConfig {
+        timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
+        level_style: rat_logger::LevelStyle::default(),
+        format_template: "{timestamp} [{level}] {message}".to_string(),
+    };
+
+    // Extreme performance configuration
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Info)
+        .add_terminal_with_config(TermConfig {
+            enable_color: true,
+            enable_async: true,        // Asynchronous mode
+            batch_size: 4096,          // 4KB batch size
+            flush_interval_ms: 50,    // 50ms flush interval
+            format: Some(format_config),
+            color: None,
+        })
+        .init_global_logger()
+        .unwrap();
+}
+```
+
+**Configuration Summary:**
+- **CLI Tools/Command-line Applications**: Use synchronous mode (`enable_async: false`)
+- **Web Services/Background Applications**: Use default asynchronous configuration (2KB batch, 25ms interval)
+- **High Throughput Services**: Use larger batch configuration (4KB batch, 50ms interval)
+- **Test/Development Environment**: Enable development mode (`with_dev_mode(true)`)
+
+### File Log Batch Configuration Guide
+
+rat_logger's file processor has an independent batch configuration mechanism. To ensure reliable file log writing, you need to choose appropriate configuration based on application scenarios.
+
+#### Reliable Write Configuration
+
+For applications that require immediate log persistence (such as CLI tools, critical business systems):
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, BatchConfig};
+use std::path::PathBuf;
+
+fn main() {
+    let file_config = FileConfig {
+        log_dir: PathBuf::from("./logs"),
+        max_file_size: 10 * 1024 * 1024, // 10MB
+        max_compressed_files: 5,
+        compression_level: 4,
+        min_compress_threads: 2,
+        skip_server_logs: false,
+        is_raw: false,
+        compress_on_drop: false,
+        format: None,
+    };
+
+    // Reliable write configuration
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Info)
+        .add_file(file_config)
+        .with_batch_config(BatchConfig {
+            batch_size: 1,          // Trigger write with 1 byte
+            batch_interval_ms: 1,  // Trigger write with 1ms
+            buffer_size: 1,        // 1 byte buffer
+        })
+        .init_global_logger()
+        .unwrap();
+}
+```
+
+#### Balanced Configuration
+
+For general web applications, balance performance and reliability:
+
+```rust
+.with_batch_config(BatchConfig {
+    batch_size: 512,        // 512 byte batch size
+    batch_interval_ms: 10,  // 10ms flush interval
+    buffer_size: 1024,      // 1KB buffer
+})
+```
+
+#### High Performance Configuration
+
+For high throughput services, prioritize performance:
+
+```rust
+.with_batch_config(BatchConfig {
+    batch_size: 2048,       // 2KB batch size
+    batch_interval_ms: 25,   // 25ms flush interval
+    buffer_size: 4096,      // 4KB buffer
+})
+```
+
+#### Configuration Selection Advice
+
+- **Critical Business Applications**: Use reliable write configuration to ensure no log loss
+- **General Web Applications**: Use balanced configuration to balance performance and reliability
+- **High Concurrency Logging**: Use high performance configuration, but ensure application runtime > 2s
+- **Quick Start Applications**: Use reliable write configuration to avoid log loss
+
 ## Architecture Design
 
 rat_logger adopts an advanced producer-consumer architecture:

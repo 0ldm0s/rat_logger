@@ -104,6 +104,8 @@ rat_logger使用批量处理机制来提高性能，但不同的应用场景需�
 
 对于日志量不大且要求可靠输出的应用（如CLI工具、命令行应用）：
 
+*⚠️ 性能数据仅供参考，实际性能因硬件和环境而异*
+
 ```rust
 use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
 
@@ -134,6 +136,8 @@ fn main() {
 
 对于高并发、大日志量的生产环境应用：
 
+*⚠️ 性能数据仅供参考，实际性能因硬件和环境而异*
+
 ```rust
 use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
 
@@ -163,6 +167,8 @@ fn main() {
 #### 极端性能配置
 
 对于极端高吞吐量的场景（如日志聚合服务）：
+
+*⚠️ 性能数据仅供参考，实际性能因硬件和环境而异*
 
 ```rust
 use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
@@ -195,6 +201,76 @@ fn main() {
 - **Web服务/后台应用**: 使用默认异步配置 (2KB批量，25ms间隔)
 - **高吞吐量服务**: 使用较大批量配置 (4KB批量，50ms间隔)
 - **测试/开发环境**: 启用开发模式 (`with_dev_mode(true)`)
+
+### 文件日志批量配置指导
+
+rat_logger的文件处理器具有独立的批量配置机制，为了确保文件日志的可靠写入，需要根据应用场景选择合适的配置。
+
+#### 可靠写入配置
+
+对于要求日志立即持久化的应用（如CLI工具、关键业务系统）：
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, BatchConfig};
+use std::path::PathBuf;
+
+fn main() {
+    let file_config = FileConfig {
+        log_dir: PathBuf::from("./logs"),
+        max_file_size: 10 * 1024 * 1024, // 10MB
+        max_compressed_files: 5,
+        compression_level: 4,
+        min_compress_threads: 2,
+        skip_server_logs: false,
+        is_raw: false,
+        compress_on_drop: false,
+        format: None,
+    };
+
+    // 可靠写入配置
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Info)
+        .add_file(file_config)
+        .with_batch_config(BatchConfig {
+            batch_size: 1,          // 1字节就触发写入
+            batch_interval_ms: 1,  // 1ms就触发写入
+            buffer_size: 1,        // 1字节缓冲区
+        })
+        .init_global_logger()
+        .unwrap();
+}
+```
+
+#### 平衡配置
+
+对于一般Web应用，平衡性能和可靠性：
+
+```rust
+.with_batch_config(BatchConfig {
+    batch_size: 512,        // 512字节批量大小
+    batch_interval_ms: 10,  // 10ms刷新间隔
+    buffer_size: 1024,      // 1KB缓冲区
+})
+```
+
+#### 高性能配置
+
+对于高吞吐量服务，优先性能：
+
+```rust
+.with_batch_config(BatchConfig {
+    batch_size: 2048,       // 2KB批量大小
+    batch_interval_ms: 25,   // 25ms刷新间隔
+    buffer_size: 4096,      // 4KB缓冲区
+})
+```
+
+#### 配置选择建议
+
+- **关键业务应用**: 使用可靠写入配置，确保日志不丢失
+- **一般Web应用**: 使用平衡配置，在性能和可靠性间取得平衡
+- **高并发日志**: 使用高性能配置，但确保应用运行时间>2秒
+- **快速启动应用**: 使用可靠写入配置，避免日志丢失
 
 ### 文件处理器配置
 

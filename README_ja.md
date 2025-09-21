@@ -177,6 +177,182 @@ fn main() {
 }
 ```
 
+## バッチ処理設定ガイド
+
+rat_loggerはパフォーマンス向上のためにバッチ処理メカニズムを使用していますが、異なるアプリケーションシナリオでは異なる設定が必要です：
+
+### 同期モード（ほとんどのアプリケーションで推奨）
+
+ログ量が少なく、確実な出力が要求されるアプリケーション（CLIツール、コマンドラインアプリケーションなど）の場合：
+
+*⚠️ パフォーマンスデータは参考値であり、実際のパフォーマンスはハードウェアや環境によって異なります*
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
+
+fn main() {
+    let format_config = FormatConfig {
+        timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
+        level_style: rat_logger::LevelStyle::default(),
+        format_template: "{timestamp} [{level}] {message}".to_string(),
+    };
+
+    // 同期モード：ログの即時出力を保証
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Info)
+        .add_terminal_with_config(TermConfig {
+            enable_color: true,
+            enable_async: false,  // 同期モード
+            batch_size: 1,        // 同期モードでは意味がない
+            flush_interval_ms: 1, // 同期モードでは意味がない
+            format: Some(format_config),
+            color: None,
+        })
+        .init_global_logger()
+        .unwrap();
+}
+```
+
+### 非同期モード（高スループットアプリケーション）
+
+高同時実行性、高ログ量の本番環境アプリケーションの場合：
+
+*⚠️ パフォーマンスデータは参考値であり、実際のパフォーマンスはハードウェアや環境によって異なります*
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
+
+fn main() {
+    let format_config = FormatConfig {
+        timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
+        level_style: rat_logger::LevelStyle::default(),
+        format_template: "{timestamp} [{level}] {message}".to_string(),
+    };
+
+    // 非同期モード：高性能バッチ処理
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Info)
+        .add_terminal_with_config(TermConfig {
+            enable_color: true,
+            enable_async: true,       // 非同期モード
+            batch_size: 2048,         // 2KBバッチサイズ
+            flush_interval_ms: 25,    // 25msフラッシュ間隔
+            format: Some(format_config),
+            color: None,
+        })
+        .init_global_logger()
+        .unwrap();
+}
+```
+
+### 極限パフォーマンス設定
+
+極めて高スループットのシナリオ（ログ集約サービスなど）の場合：
+
+*⚠️ パフォーマンスデータは参考値であり、実際のパフォーマンスはハードウェアや環境によって異なります*
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
+
+fn main() {
+    let format_config = FormatConfig {
+        timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
+        level_style: rat_logger::LevelStyle::default(),
+        format_template: "{timestamp} [{level}] {message}".to_string(),
+    };
+
+    // 極限パフォーマンス設定
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Info)
+        .add_terminal_with_config(TermConfig {
+            enable_color: true,
+            enable_async: true,        // 非同期モード
+            batch_size: 4096,          // 4KBバッチサイズ
+            flush_interval_ms: 50,    // 50msフラッシュ間隔
+            format: Some(format_config),
+            color: None,
+        })
+        .init_global_logger()
+        .unwrap();
+}
+```
+
+**設定の要約：**
+- **CLIツール/コマンドラインアプリケーション**: 同期モードを使用 (`enable_async: false`)
+- **Webサービス/バックグラウンドアプリケーション**: デフォルトの非同期設定を使用 (2KBバッチ、25ms間隔)
+- **高スループットサービス**: より大きなバッチ設定を使用 (4KBバッチ、50ms間隔)
+- **テスト/開発環境**: 開発モードを有効にする (`with_dev_mode(true)`)
+
+### ファイルログバッチ設定ガイド
+
+rat_loggerのファイルプロセッサは独立したバッチ設定メカニズムを持っています。ファイルログの確実な書き込みを保証するために、アプリケーションシナリオに基づいて適切な設定を選択する必要があります。
+
+#### 信頼性の高い書き込み設定
+
+即時のログ永続化が要求されるアプリケーション（CLIツール、重要なビジネスシステムなど）の場合：
+
+```rust
+use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, BatchConfig};
+use std::path::PathBuf;
+
+fn main() {
+    let file_config = FileConfig {
+        log_dir: PathBuf::from("./logs"),
+        max_file_size: 10 * 1024 * 1024, // 10MB
+        max_compressed_files: 5,
+        compression_level: 4,
+        min_compress_threads: 2,
+        skip_server_logs: false,
+        is_raw: false,
+        compress_on_drop: false,
+        format: None,
+    };
+
+    // 信頼性の高い書き込み設定
+    LoggerBuilder::new()
+        .with_level(LevelFilter::Info)
+        .add_file(file_config)
+        .with_batch_config(BatchConfig {
+            batch_size: 1,          // 1バイトで書き込みをトリガー
+            batch_interval_ms: 1,  // 1msで書き込みをトリガー
+            buffer_size: 1,        // 1バイトバッファ
+        })
+        .init_global_logger()
+        .unwrap();
+}
+```
+
+#### バランス設定
+
+一般的なWebアプリケーションで、パフォーマンスと信頼性をバランスさせる場合：
+
+```rust
+.with_batch_config(BatchConfig {
+    batch_size: 512,        // 512バイトバッチサイズ
+    batch_interval_ms: 10,  // 10msフラッシュ間隔
+    buffer_size: 1024,      // 1KBバッファ
+})
+```
+
+#### 高パフォーマンス設定
+
+高スループットサービスで、パフォーマンスを優先する場合：
+
+```rust
+.with_batch_config(BatchConfig {
+    batch_size: 2048,       // 2KBバッチサイズ
+    batch_interval_ms: 25,   // 25msフラッシュ間隔
+    buffer_size: 4096,      // 4KBバッファ
+})
+```
+
+#### 設定選択のアドバイス
+
+- **重要なビジネスアプリケーション**: 信頼性の高い書き込み設定を使用し、ログの損失を防ぐ
+- **一般的なWebアプリケーション**: バランス設定を使用し、パフォーマンスと信頼性のバランスを取る
+- **高同時実行性ログ**: 高パフォーマンス設定を使用するが、アプリケーションの実行時間 > 2秒を確保
+- **クイックスタートアプリケーション**: 信頼性の高い書き込み設定を使用し、ログの損失を避ける
+
 ## アーキテクチャ設計
 
 rat_loggerは先進的なプロデューサー-コンシューマーアーキテクチャを採用しています：
