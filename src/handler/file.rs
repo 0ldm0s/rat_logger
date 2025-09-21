@@ -367,10 +367,12 @@ impl LogProcessor for FileProcessor {
     }
 
     fn process(&mut self, data: &[u8]) -> Result<(), String> {
+  
         // 反序列化日志记录
         let record = bincode::decode_from_slice::<Record, _>(data, bincode::config::standard())
             .map_err(|e| format!("反序列化失败: {}", e))?.0;
 
+  
         // 根据配置决定是否跳过服务端自身日志
         if self.config.file_config.skip_server_logs && record.metadata.app_id.is_none() {
             return Ok(());
@@ -389,6 +391,7 @@ impl LogProcessor for FileProcessor {
                               let last_flush_guard = self.last_flush.lock();
                               last_flush_guard.elapsed() >= Duration::from_millis(self.config.flush_interval_ms)
                           };
+
 
         if should_send {
             let data_to_send = buffer_guard.clone();
