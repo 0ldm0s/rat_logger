@@ -43,8 +43,7 @@ fn test_level_logging() -> Result<(), Box<dyn std::error::Error>> {
         // 使用LoggerBuilder创建过滤器
         let logger = LoggerBuilder::new()
             .with_level(filter_level)
-            .with_dev_mode(true) // 确保立即输出
-            .add_terminal()
+            .add_terminal_with_config(rat_logger::handler::term::TermConfig::default())
             .build();
 
         println!("📤 发送测试消息到 {:?} 过滤器:", filter_level);

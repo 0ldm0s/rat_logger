@@ -208,8 +208,14 @@ impl ProcessorWorker {
         let flush_interval = Duration::from_millis(config.batch_interval_ms);
 
         loop {
-            // 使用recv_timeout来定期检查时间间隔
-            let command = receiver.recv_timeout(Duration::from_millis(100));
+            // 优化：根据配置动态调整超时时间
+            let timeout_ms = if config.batch_interval_ms <= 100 {
+                config.batch_interval_ms
+            } else {
+                100 // 最大不超过100ms
+            };
+
+            let command = receiver.recv_timeout(Duration::from_millis(timeout_ms));
 
             match command {
                 Ok(LogCommand::Write(data)) => {
@@ -218,38 +224,28 @@ impl ProcessorWorker {
                     // 批量写入条件：达到batch_size或时间间隔
                     if batch_buffer.len() >= config.batch_size ||
                        last_flush.elapsed() >= flush_interval {
-                        if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
-                            eprintln!("[{}] 批量处理失败: {}", processor_name, e);
-                        }
+                        let _ = Self::process_batch(&mut processor, &mut batch_buffer);
                         last_flush = Instant::now();
                     }
 
                     // 如果是同步模式（batch_size=1且batch_interval_ms=1），立即处理
                     if config.batch_size == 1 && config.batch_interval_ms == 1 && !batch_buffer.is_empty() {
-                        if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
-                            eprintln!("[{}] 同步模式处理失败: {}", processor_name, e);
-                        }
+                        let _ = Self::process_batch(&mut processor, &mut batch_buffer);
                         last_flush = Instant::now();
                     }
                 }
                 Ok(LogCommand::WriteForce(data)) => {
                     // 强制写入：立即处理缓冲区中的数据，然后立即处理当前数据
                     if !batch_buffer.is_empty() {
-                        if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
-                            eprintln!("[{}] WriteForce前批量处理失败: {}", processor_name, e);
-                        }
+                        let _ = Self::process_batch(&mut processor, &mut batch_buffer);
                         batch_buffer.clear();
                     }
 
                     // 立即处理当前数据
-                    if let Err(e) = processor.process(&data) {
-                        eprintln!("[{}] WriteForce直接处理失败: {}", processor_name, e);
-                    }
+                    let _ = processor.process(&data);
 
                     // 立即刷新
-                    if let Err(e) = processor.flush() {
-                        eprintln!("[{}] WriteForce刷新失败: {}", processor_name, e);
-                    }
+                    let _ = processor.flush();
                     last_flush = Instant::now();
                 }
                 Ok(LogCommand::Rotate) => {
@@ -323,9 +319,7 @@ impl ProcessorWorker {
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
                     // 超时：检查是否达到时间间隔
                     if !batch_buffer.is_empty() && last_flush.elapsed() >= flush_interval {
-                        if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
-                            eprintln!("[{}] 超时批量处理失败: {}", processor_name, e);
-                        }
+                        let _ = Self::process_batch(&mut processor, &mut batch_buffer);
                         last_flush = Instant::now();
                     }
                 }

@@ -224,17 +224,14 @@ impl LogProcessor for FileProcessor {
         // 格式化日志记录
         let formatted_data = self.format_record(&record)?;
 
-        // 直接写入文件
+        // 直接写入文件并检查轮转
         {
             let mut writer_guard = self.writer.lock();
             if let Err(e) = writer_guard.write_direct(&formatted_data) {
                 return Err(format!("文件写入失败: {}", e));
             }
-        }
 
-        // 检查是否需要轮转
-        {
-            let writer_guard = self.writer.lock();
+            // 检查是否需要轮转
             if writer_guard.current_size >= writer_guard.max_size {
                 drop(writer_guard);
                 self.perform_rotation()?;
@@ -340,7 +337,7 @@ impl LogWriter {
             current_size: 0,
             last_flush: Instant::now(),
             flush_interval: Duration::from_millis(100),
-            aggressive_sync: force_sync || !cfg!(windows), // 优先使用用户配置
+            aggressive_sync: force_sync, // 严格使用用户配置
         })
     }
 
@@ -366,7 +363,7 @@ impl LogWriter {
             current_size: 0,
             last_flush: Instant::now(),
             flush_interval: Duration::from_millis(100),
-            aggressive_sync: force_sync || !cfg!(windows), // 优先使用用户配置
+            aggressive_sync: force_sync, // 严格使用用户配置
         }
     }
 
@@ -390,10 +387,11 @@ impl LogWriter {
         if let Some(file) = &mut self.current_file {
             file.write_all(data)?;
             self.current_size += data.len();
-            file.flush()?; // 直接刷新确保数据写入
 
             // 如果配置为强制同步，则立即同步到磁盘
             if self.aggressive_sync {
+                file.flush()?; // 强制同步模式下才刷新
+
                 #[cfg(windows)]
                 {
                     // Windows上使用更轻量的同步方式

@@ -7,6 +7,7 @@
 
 use rat_logger::{LoggerBuilder, LevelFilter, Level, FileConfig, config::Record, Logger};
 use rat_logger::config::Metadata;
+use rat_logger::producer_consumer::BatchConfig;
 use std::sync::Arc;
 use std::time::Instant;
 use std::path::PathBuf;
@@ -35,7 +36,13 @@ fn benchmark_terminal_only() -> Result<(), Box<dyn std::error::Error>> {
 
     let logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
-        .add_terminal()
+        .with_async_mode(true)
+        .with_batch_config(BatchConfig {
+            batch_size: 1000,     // 适合性能测试的批量大小
+            batch_interval_ms: 100,  // 100ms间隔
+            buffer_size: 10000,
+        })
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig::default())
         .build();
 
     let start = Instant::now();
@@ -78,11 +85,18 @@ fn benchmark_file_only() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false, // 异步模式测试性能
         format: None,
     };
 
     let logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
+        .with_async_mode(true)
+        .with_batch_config(BatchConfig {
+            batch_size: 1000,     // 适合性能测试的批量大小
+            batch_interval_ms: 100,  // 100ms间隔
+            buffer_size: 10000,
+        })
         .add_file(file_config)
         .build();
 
@@ -129,12 +143,19 @@ fn benchmark_terminal_and_file() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false, // 异步模式测试性能
         format: None,
     };
 
     let logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
-        .add_terminal()
+        .with_async_mode(true)
+        .with_batch_config(BatchConfig {
+            batch_size: 1000,     // 适合性能测试的批量大小
+            batch_interval_ms: 100,  // 100ms间隔
+            buffer_size: 10000,
+        })
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig::default())
         .add_file(file_config)
         .build();
 
@@ -181,11 +202,18 @@ fn benchmark_multithreaded() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false, // 异步模式测试性能
         format: None,
     };
 
     let logger = Arc::new(LoggerBuilder::new()
         .with_level(LevelFilter::Info)
+        .with_async_mode(true)
+        .with_batch_config(BatchConfig {
+            batch_size: 1000,     // 适合性能测试的批量大小
+            batch_interval_ms: 100,  // 100ms间隔
+            buffer_size: 10000,
+        })
         .add_file(file_config)
         .build());
 
@@ -245,6 +273,7 @@ fn benchmark_different_log_levels() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false, // 异步模式测试性能
         format: None,
     };
 
@@ -259,6 +288,12 @@ fn benchmark_different_log_levels() -> Result<(), Box<dyn std::error::Error>> {
     for (level, level_name) in levels {
         let logger = LoggerBuilder::new()
             .with_level(LevelFilter::Trace)
+            .with_async_mode(true)
+            .with_batch_config(BatchConfig {
+                batch_size: 1000,     // 适合性能测试的批量大小
+                batch_interval_ms: 100,  // 100ms间隔
+                buffer_size: 10000,
+            })
             .add_file(file_config.clone())
             .build();
 
@@ -322,11 +357,18 @@ fn test_basic_functionality() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false, // 异步模式测试性能
         format: None,
     };
 
     let logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
+        .with_async_mode(true)
+        .with_batch_config(BatchConfig {
+            batch_size: 1000,     // 适合性能测试的批量大小
+            batch_interval_ms: 100,  // 100ms间隔
+            buffer_size: 10000,
+        })
         .add_file(file_config)
         .build();
 

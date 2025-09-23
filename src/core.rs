@@ -142,15 +142,18 @@ impl LoggerCore {
 impl Logger for LoggerCore {
     fn log(&self, record: &Record) {
         if self.should_log(&record.metadata.level) {
-            // Error级别日志自动使用紧急模式
-            if record.metadata.level == crate::config::Level::Error {
-                self.emergency_log(record);
-                return;
-            }
+            // 优化：使用快速路径处理非Error级别日志
+            let is_error = record.metadata.level == crate::config::Level::Error;
 
-            // 序列化日志数据并发送给所有处理器
+            // 序列化日志数据
             if let Ok(data) = bincode::encode_to_vec(record, bincode::config::standard()) {
-                let _ = self.processor_manager.broadcast_write(data);
+                if is_error {
+                    // Error级别日志自动使用紧急模式
+                    let _ = self.processor_manager.broadcast_write_force(data);
+                } else {
+                    // 普通日志使用正常路径
+                    let _ = self.processor_manager.broadcast_write(data);
+                }
 
                 // 开发模式：同步等待日志处理完成
                 if self.dev_mode {
