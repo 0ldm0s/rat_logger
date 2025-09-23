@@ -37,8 +37,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 初始化全局日志器
     LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
-        .add_terminal()
-        .init()?;
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig::default())
+        .init_global_logger()?;
 
     // 使用日志宏记录日志
     error!("这是一个错误日志");
@@ -61,14 +61,14 @@ fn main() {
     // 生产环境配置（推荐）
     let prod_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
-        .add_terminal()
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig::default())
         .build();
 
     // 开发环境配置（立即输出）
     let dev_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
         .with_dev_mode(true)  // 启用开发模式，确保日志立即输出
-        .add_terminal()
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig::default())
         .build();
 
     // 生产环境文件日志器
@@ -81,6 +81,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false,      // 异步写入，性能更好
         format: None,
     };
 
@@ -98,7 +99,7 @@ fn main() {
 
 ### 批量处理配置建议
 
-rat_logger使用批量处理机制来提高性能，但不同的应用场景需要不同的配置：
+rat_logger使用批量处理机制来提高性能，通过BatchConfig来控制批量处理的行为：
 
 #### 同步模式（推荐用于大多数应用）
 
@@ -107,7 +108,7 @@ rat_logger使用批量处理机制来提高性能，但不同的应用场景需�
 *⚠️ 性能数据仅供参考，实际性能因硬件和环境而异*
 
 ```rust
-use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
+use rat_logger::{LoggerBuilder, LevelFilter, FormatConfig};
 
 fn main() {
     let format_config = FormatConfig {
@@ -116,14 +117,11 @@ fn main() {
         format_template: "{timestamp} [{level}] {message}".to_string(),
     };
 
-    // 同步模式：确保日志立即输出
+    // 同步模式：自动使用同步配置，确保日志立即输出
     LoggerBuilder::new()
         .with_level(LevelFilter::Info)
-        .add_terminal_with_config(TermConfig {
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig {
             enable_color: true,
-            enable_async: false,  // 同步模式
-            batch_size: 1,        // 同步模式下无意义
-            flush_interval_ms: 1, // 同步模式下无意义
             format: Some(format_config),
             color: None,
         })
@@ -132,6 +130,8 @@ fn main() {
 }
 ```
 
+**注意**：同步模式下，LoggerBuilder会自动使用同步的BatchConfig（batch_size=1, batch_interval_ms=1, buffer_size=1024），无需手动配置。
+
 #### 异步模式（高吞吐量应用）
 
 对于高并发、大日志量的生产环境应用：
@@ -139,7 +139,7 @@ fn main() {
 *⚠️ 性能数据仅供参考，实际性能因硬件和环境而异*
 
 ```rust
-use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
+use rat_logger::{LoggerBuilder, LevelFilter, FormatConfig, BatchConfig};
 
 fn main() {
     let format_config = FormatConfig {
@@ -151,11 +151,14 @@ fn main() {
     // 异步模式：高性能批量处理
     LoggerBuilder::new()
         .with_level(LevelFilter::Info)
-        .add_terminal_with_config(TermConfig {
-            enable_color: true,
-            enable_async: true,       // 异步模式
+        .with_async_mode(true)  // 启用异步模式
+        .with_batch_config(BatchConfig {
             batch_size: 2048,         // 2KB批量大小
-            flush_interval_ms: 25,    // 25ms刷新间隔
+            batch_interval_ms: 25,    // 25ms刷新间隔
+            buffer_size: 16384,      // 16KB缓冲区
+        })
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig {
+            enable_color: true,
             format: Some(format_config),
             color: None,
         })
@@ -171,7 +174,7 @@ fn main() {
 *⚠️ 性能数据仅供参考，实际性能因硬件和环境而异*
 
 ```rust
-use rat_logger::{LoggerBuilder, LevelFilter, TermConfig, FormatConfig};
+use rat_logger::{LoggerBuilder, LevelFilter, FormatConfig, BatchConfig};
 
 fn main() {
     let format_config = FormatConfig {
@@ -183,11 +186,14 @@ fn main() {
     // 极端性能配置
     LoggerBuilder::new()
         .with_level(LevelFilter::Info)
-        .add_terminal_with_config(TermConfig {
-            enable_color: true,
-            enable_async: true,        // 异步模式
+        .with_async_mode(true)  // 启用异步模式
+        .with_batch_config(BatchConfig {
             batch_size: 4096,          // 4KB批量大小
-            flush_interval_ms: 50,    // 50ms刷新间隔
+            batch_interval_ms: 50,    // 50ms刷新间隔
+            buffer_size: 32768,      // 32KB缓冲区
+        })
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig {
+            enable_color: true,
             format: Some(format_config),
             color: None,
         })
@@ -197,8 +203,8 @@ fn main() {
 ```
 
 **配置建议总结：**
-- **CLI工具/命令行应用**: 使用同步模式 (`enable_async: false`)
-- **Web服务/后台应用**: 使用默认异步配置 (2KB批量，25ms间隔)
+- **CLI工具/命令行应用**: 使用默认配置（同步模式）
+- **Web服务/后台应用**: 使用异步批量配置 (2KB批量，25ms间隔)
 - **高吞吐量服务**: 使用较大批量配置 (4KB批量，50ms间隔)
 - **测试/开发环境**: 启用开发模式 (`with_dev_mode(true)`)
 
@@ -224,6 +230,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false,     // 异步写入，性能更好
         format: None,
     };
 
@@ -288,6 +295,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false,      // 异步写入，性能更好
         format: None,
     };
 
@@ -335,6 +343,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false,      // 异步写入，性能更好
         format: None,
     };
 
@@ -342,7 +351,7 @@ fn main() {
     // LoggerBuilder内部使用ProcessorManager协调多个处理器
     let logger = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
-        .add_terminal()    // 添加终端输出
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig::default())  // 添加终端输出
         .add_file(file_config)  // 添加文件输出
         .build();
 }
@@ -438,6 +447,7 @@ pub struct FileConfig {
     pub skip_server_logs: bool,        // 是否跳过服务器日志
     pub is_raw: bool,                  // 是否为原始日志
     pub compress_on_drop: bool,         // 退出时是否压缩
+    pub force_sync: bool,               // 是否强制同步写入磁盘
     pub format: Option<FormatConfig>,  // 格式配置
 }
 ```
@@ -458,9 +468,6 @@ pub struct NetworkConfig {
 ```rust
 pub struct TermConfig {
     pub enable_color: bool,          // 是否启用颜色
-    pub enable_async: bool,          // 是否启用异步
-    pub batch_size: usize,           // 批量大小
-    pub flush_interval_ms: u64,      // 刷新间隔（毫秒）
     pub format: Option<FormatConfig>, // 格式配置
     pub color: Option<ColorConfig>,   // 颜色配置
 }
@@ -472,6 +479,7 @@ pub struct TermConfig {
 
 ```rust
 use rat_logger::{LoggerBuilder, LevelFilter, FormatConfig, ColorConfig};
+use rat_logger::handler::term::TermConfig;
 
 fn main() {
     // 创建格式配置
@@ -503,11 +511,8 @@ fn main() {
     // 创建带配置的终端处理器
     let logger = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
-        .add_terminal_with_config(rat_logger::handler::term::TermConfig {
+        .add_terminal_with_config(TermConfig {
             enable_color: true,
-            enable_async: true,
-            batch_size: 8192,
-            flush_interval_ms: 100,
             format: Some(format_config),
             color: Some(color_config),
         })
@@ -545,6 +550,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false,      // 异步写入，性能更好
         format: Some(json_format),  // 使用自定义格式
     };
 
@@ -651,8 +657,10 @@ rat_logger = "0.2.0"
 - `examples/basic_usage.rs` - 基础使用示例，展示多种输出方式
 - `examples/composite_handler.rs` - 多输出处理器示例，终端+文件同时输出
 - `examples/file_rotation.rs` - 文件轮转和压缩功能测试
+- `examples/sync_async_demo.rs` - 同步与异步模式对比演示
 - `examples/term_format_example.rs` - 终端格式配置和颜色设置示例
 - `examples/file_format_example.rs` - 文件格式配置示例，包括JSON格式
+- `examples/color_format_example.rs` - 颜色格式配置示例
 - `examples/macro_format_example.rs` - 宏与格式配置结合使用示例
 - `examples/macro_example.rs` - 日志宏使用示例，支持全局初始化
 - `examples/pm2_style_logging.rs` - PM2风格多文件日志管理

@@ -2,3 +2,4 @@
 *_logs
 /.claude
 *.bak
+*.log
