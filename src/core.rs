@@ -4,6 +4,7 @@ use std::sync::Arc;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use crossbeam_channel::Sender;
 
 use crate::config::{LevelFilter, Record};
 use crate::producer_consumer::{ProcessorManager, BatchConfig};
@@ -30,6 +31,8 @@ pub enum LogCommand {
     Flush,
     /// 停止工作线程
     Shutdown,
+    /// 健康检查（用于初始化时验证工作线程状态）
+    HealthCheck(Sender<bool>),
 }
 
 /// 日志器 trait - 极简接口
@@ -46,15 +49,34 @@ pub struct LoggerCore {
     level: LevelFilter,
     processor_manager: Arc<ProcessorManager>,
     dev_mode: bool, // 开发模式：同步等待日志处理完成
+    /// 需要等待的处理器类型集合
+    expected_processor_types: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl LoggerCore {
     /// 创建新的日志核心
-    pub fn new(level: LevelFilter, processor_manager: ProcessorManager, dev_mode: bool) -> Self {
+    pub fn new(level: LevelFilter, processor_manager: ProcessorManager, batch_config: BatchConfig, dev_mode: bool) -> Self {
         Self {
             level,
             processor_manager: Arc::new(processor_manager),
             dev_mode,
+            expected_processor_types: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        }
+    }
+
+    /// 创建新的日志核心（带预期的处理器类型）
+    pub fn with_expected_types(
+        level: LevelFilter,
+        processor_manager: ProcessorManager,
+        batch_config: BatchConfig,
+        dev_mode: bool,
+        expected_types: std::collections::HashSet<String>
+    ) -> Self {
+        Self {
+            level,
+            processor_manager: Arc::new(processor_manager),
+            dev_mode,
+            expected_processor_types: Arc::new(std::sync::Mutex::new(expected_types)),
         }
     }
 
@@ -71,6 +93,31 @@ impl LoggerCore {
     /// 获取ProcessorManager的引用
     pub fn processor_manager(&self) -> &Arc<ProcessorManager> {
         &self.processor_manager
+    }
+
+    /// 智能等待所有工作线程启动就绪
+    pub fn wait_for_workers_ready(&self, timeout_ms: u64) -> Result<(), String> {
+        // 获取预期的处理器类型
+        let expected_types: Vec<String> = {
+            let guard = self.expected_processor_types.lock().unwrap();
+            guard.iter().cloned().collect()
+        };
+
+        if expected_types.is_empty() {
+            // 如果没有指定预期的处理器类型，直接检查所有处理器
+            self.processor_manager.smart_health_check(timeout_ms)?;
+        } else {
+            // 检查指定的处理器类型
+            self.processor_manager.check_specific_types(&expected_types, timeout_ms)?;
+        }
+
+        Ok(())
+    }
+
+    /// 添加预期的处理器类型
+    pub fn add_expected_type(&self, processor_type: String) {
+        let mut guard = self.expected_processor_types.lock().unwrap();
+        guard.insert(processor_type);
     }
 }
 
@@ -109,8 +156,12 @@ impl Logger for LoggerCore {
 pub struct LoggerBuilder {
     level: LevelFilter,
     processor_manager: ProcessorManager,
-    batch_config: BatchConfig,
+    batch_config: Option<BatchConfig>,
     dev_mode: bool, // 开发模式：同步等待日志处理完成
+    /// 是否启用异步模式
+    enable_async: bool,
+    /// 预期的处理器类型集合
+    expected_processor_types: std::collections::HashSet<String>,
 }
 
 impl LoggerBuilder {
@@ -119,9 +170,17 @@ impl LoggerBuilder {
         Self {
             level: LevelFilter::Info,
             processor_manager: ProcessorManager::new(),
-            batch_config: BatchConfig::default(),
+            batch_config: None,
             dev_mode: false,
+            enable_async: false,
+            expected_processor_types: std::collections::HashSet::new(),
         }
+    }
+
+    /// 设置是否启用异步模式
+    pub fn with_async_mode(mut self, enable_async: bool) -> Self {
+        self.enable_async = enable_async;
+        self
     }
 
     /// 设置日志级别
@@ -132,7 +191,7 @@ impl LoggerBuilder {
 
     /// 设置批量配置
     pub fn with_batch_config(mut self, config: BatchConfig) -> Self {
-        self.batch_config = config;
+        self.batch_config = Some(config);
         self
     }
 
@@ -151,8 +210,24 @@ impl LoggerBuilder {
     pub fn add_terminal_with_config(mut self, config: crate::handler::term::TermConfig) -> Self {
         use crate::handler::term::TermProcessor;
         let processor = TermProcessor::with_config(config);
-        if let Err(e) = self.processor_manager.add_processor(processor, self.batch_config.clone()) {
+
+        // 如果还没有设置batch_config，使用默认的同步配置
+        let batch_config = self.batch_config.clone().unwrap_or_else(|| {
+            if self.enable_async {
+                panic!("配置错误: 异步模式必须先配置BatchConfig，请使用with_batch_config()方法设置。");
+            } else {
+                BatchConfig {
+                    batch_size: 1,
+                    batch_interval_ms: 1,
+                    buffer_size: 1024,
+                }
+            }
+        });
+
+        if let Err(e) = self.processor_manager.add_processor(processor, batch_config) {
             eprintln!("添加终端处理器失败: {}", e);
+        } else {
+            self.expected_processor_types.insert("term".to_string());
         }
         self
     }
@@ -161,8 +236,24 @@ impl LoggerBuilder {
     pub fn add_file(mut self, config: crate::config::FileConfig) -> Self {
         use crate::handler::file::FileProcessor;
         let processor = FileProcessor::new(config);
-        if let Err(e) = self.processor_manager.add_processor(processor, self.batch_config.clone()) {
+
+        // 如果还没有设置batch_config，使用默认的同步配置
+        let batch_config = self.batch_config.clone().unwrap_or_else(|| {
+            if self.enable_async {
+                panic!("配置错误: 异步模式必须先配置BatchConfig，请使用with_batch_config()方法设置。");
+            } else {
+                BatchConfig {
+                    batch_size: 1,
+                    batch_interval_ms: 1,
+                    buffer_size: 1024,
+                }
+            }
+        });
+
+        if let Err(e) = self.processor_manager.add_processor(processor, batch_config) {
             eprintln!("添加文件处理器失败: {}", e);
+        } else {
+            self.expected_processor_types.insert("file".to_string());
         }
         self
     }
@@ -171,8 +262,24 @@ impl LoggerBuilder {
     pub fn add_udp(mut self, config: crate::config::NetworkConfig) -> Self {
         use crate::handler::udp::UdpProcessor;
         let processor = UdpProcessor::new(config);
-        if let Err(e) = self.processor_manager.add_processor(processor, self.batch_config.clone()) {
+
+        // 如果还没有设置batch_config，使用默认的同步配置
+        let batch_config = self.batch_config.clone().unwrap_or_else(|| {
+            if self.enable_async {
+                panic!("配置错误: 异步模式必须先配置BatchConfig，请使用with_batch_config()方法设置。");
+            } else {
+                BatchConfig {
+                    batch_size: 1,
+                    batch_interval_ms: 1,
+                    buffer_size: 1024,
+                }
+            }
+        });
+
+        if let Err(e) = self.processor_manager.add_processor(processor, batch_config) {
             eprintln!("添加UDP处理器失败: {}", e);
+        } else {
+            self.expected_processor_types.insert("udp".to_string());
         }
         self
     }
@@ -180,7 +287,24 @@ impl LoggerBuilder {
     /// 构建日志器
     pub fn build(self) -> LoggerCore {
         // 验证批量配置
-        if let Err(e) = self.batch_config.validate() {
+        let batch_config = match self.batch_config {
+            Some(config) => config,
+            None => {
+                if self.enable_async {
+                    panic!("配置错误: 异步模式必须配置BatchConfig，请使用with_batch_config()方法设置。");
+                } else {
+                    // 同步模式使用默认配置
+                    BatchConfig {
+                        batch_size: 1,
+                        batch_interval_ms: 1,
+                        buffer_size: 1024,
+                    }
+                }
+            }
+        };
+
+        // 验证批量配置
+        if let Err(e) = batch_config.validate() {
             panic!("LoggerBuilder 批量配置验证失败: {}\n请检查您的批量配置并修复上述问题后再重试。", e);
         }
 
@@ -189,7 +313,13 @@ impl LoggerBuilder {
             panic!("配置错误: 必须至少添加一个处理器（终端、文件或UDP）");
         }
 
-        LoggerCore::new(self.level, self.processor_manager, self.dev_mode)
+        LoggerCore::with_expected_types(
+            self.level,
+            self.processor_manager,
+            batch_config,
+            self.dev_mode,
+            self.expected_processor_types
+        )
     }
 
     /// 构建并初始化全局日志器
@@ -215,6 +345,25 @@ impl LoggerBuilder {
             }
 
             *guard = Some(logger);
+
+            // 智能等待所有工作线程启动就绪
+            // 替换原来的固定延时，提供更可靠的等待机制
+            if let Some(logger) = guard.as_ref() {
+                // 使用更安全的方式检查类型
+                let logger_ptr = logger.as_ref() as *const dyn Logger;
+                let logger_core_ptr = logger_ptr as *const LoggerCore;
+
+                // 检查是否确实是LoggerCore类型
+                if !logger_ptr.is_null() && !logger_core_ptr.is_null() {
+                    // 安全转换，因为我们已经检查了类型
+                    let logger_core = unsafe { &*logger_core_ptr };
+
+                    // 智能等待所有工作线程启动就绪，超时时间5秒
+                    if let Err(e) = logger_core.wait_for_workers_ready(5000) {
+                        panic!("❌ 日志器初始化失败：工作线程健康检查失败: {}\n请检查处理器配置或系统资源", e);
+                    }
+                }
+            }
         }
 
         set_max_level(level);

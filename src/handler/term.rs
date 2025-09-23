@@ -2,10 +2,8 @@
 
 use std::io::{self, Write, BufWriter};
 use std::any::Any;
-use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::producer_consumer::LogProcessor;
 use crate::config::{Record, FormatConfig, ColorConfig, Level};
@@ -15,12 +13,6 @@ use crate::config::{Record, FormatConfig, ColorConfig, Level};
 pub struct TermConfig {
     /// 是否启用颜色输出
     pub enable_color: bool,
-    /// 是否启用异步输出
-    pub enable_async: bool,
-    /// 批量大小
-    pub batch_size: usize,
-    /// 刷新间隔（毫秒）
-    pub flush_interval_ms: u64,
     /// 格式配置
     pub format: Option<FormatConfig>,
     /// 颜色配置
@@ -33,22 +25,6 @@ impl TermConfig {
         // 验证颜色配置一致性
         if !self.enable_color && self.color.is_some() {
             return Err(format!("配置冲突: 颜色配置被提供但 enable_color 为 false。如果要启用颜色，请设置 enable_color = true；如果要禁用颜色，请移除 color 配置。"));
-        }
-
-        // 验证批量大小合理性
-        if self.batch_size == 0 {
-            return Err("配置错误: 批量大小不能为 0".to_string());
-        }
-        if self.batch_size > 1024 * 1024 {
-            return Err("配置错误: 批量大小过大 (最大 1MB)".to_string());
-        }
-
-        // 验证刷新间隔
-        if self.flush_interval_ms == 0 {
-            return Err("配置错误: 刷新间隔不能为 0".to_string());
-        }
-        if self.flush_interval_ms > 60000 {
-            return Err("配置错误: 刷新间隔过长 (最大 60秒)".to_string());
         }
 
         // 验证格式配置（如果提供）
@@ -69,9 +45,6 @@ impl Default for TermConfig {
     fn default() -> Self {
         Self {
             enable_color: true,
-            enable_async: true,
-            batch_size: 2048,      // 2KB - 更保守的批量大小确保可靠输出
-            flush_interval_ms: 25,  // 25ms - 更短的间隔确保及时输出
             format: None,
             color: None,
         }
@@ -82,9 +55,6 @@ impl Default for TermConfig {
 pub struct TermProcessor {
     config: TermConfig,
     formatter: Box<dyn Fn(&mut dyn Write, &Record) -> io::Result<()> + Send + Sync>,
-    buffer: Arc<Mutex<Vec<u8>>>,
-    last_flush: Arc<Mutex<Instant>>,
-    is_running: Arc<AtomicBool>,
     stdout: Arc<Mutex<BufWriter<io::Stdout>>>,
 }
 
@@ -137,71 +107,13 @@ impl TermProcessor {
         let processor = Self {
             config,
             formatter,
-            buffer: Arc::new(Mutex::new(Vec::with_capacity(64 * 1024))),
-            last_flush: Arc::new(Mutex::new(Instant::now())),
-            is_running: Arc::new(AtomicBool::new(true)),
             stdout: Arc::new(Mutex::new(BufWriter::new(io::stdout()))),
         };
-
-        // 如果启用异步输出，启动刷新线程
-        if processor.config.enable_async {
-            processor.start_flush_thread();
-        }
 
         processor
     }
 
-    /// 启动异步刷新线程
-    fn start_flush_thread(&self) {
-        let buffer = Arc::clone(&self.buffer);
-        let last_flush = Arc::clone(&self.last_flush);
-        let stdout = Arc::clone(&self.stdout);
-        let is_running = Arc::clone(&self.is_running);
-        let flush_interval = Duration::from_millis(self.config.flush_interval_ms);
-
-        std::thread::spawn(move || {
-            while is_running.load(Ordering::Relaxed) {
-                std::thread::sleep(flush_interval);
-
-                let should_flush = {
-                    let last_flush_guard = last_flush.lock();
-                    last_flush_guard.elapsed() >= flush_interval
-                };
-
-                if should_flush {
-                    let mut buffer_guard = buffer.lock();
-                    if !buffer_guard.is_empty() {
-                        let mut stdout_guard = stdout.lock();
-                        if let Err(e) = stdout_guard.write_all(buffer_guard.as_slice()) {
-                            eprintln!("[term] 异步写入失败: {}", e);
-                        }
-                        if let Err(e) = stdout_guard.flush() {
-                            eprintln!("[term] 异步刷新失败: {}", e);
-                        }
-                        buffer_guard.clear();
-                    }
-                    drop(buffer_guard);
-
-                    let mut last_flush_guard = last_flush.lock();
-                    *last_flush_guard = Instant::now();
-                }
-            }
-
-            // 线程结束时，刷新剩余数据
-            let mut buffer_guard = buffer.lock();
-            if !buffer_guard.is_empty() {
-                let mut stdout_guard = stdout.lock();
-                if let Err(e) = stdout_guard.write_all(buffer_guard.as_slice()) {
-                    eprintln!("[term] 最终写入失败: {}", e);
-                }
-                if let Err(e) = stdout_guard.flush() {
-                    eprintln!("[term] 最终刷新失败: {}", e);
-                }
-                buffer_guard.clear();
-            }
-        });
-    }
-
+    
     /// 设置自定义格式化函数
     pub fn with_formatter<F>(mut self, formatter: F) -> Self
     where
@@ -234,35 +146,13 @@ impl TermProcessor {
         Ok(buf)
     }
 
-    /// 写入到缓冲区
-    fn write_to_buffer(&self, data: &[u8]) -> Result<(), String> {
-        if self.config.enable_async {
-            // 异步模式：写入缓冲区
-            let mut buffer_guard = self.buffer.lock();
-            buffer_guard.extend_from_slice(data);
-
-            // 检查是否需要立即刷新
-            if buffer_guard.len() >= self.config.batch_size {
-                let mut stdout_guard = self.stdout.lock();
-                stdout_guard.write_all(buffer_guard.as_slice())
-                    .map_err(|e| format!("批量写入失败: {}", e))?;
-                stdout_guard.flush()
-                    .map_err(|e| format!("批量刷新失败: {}", e))?;
-                buffer_guard.clear();
-            }
-
-            // 更新最后刷新时间
-            let mut last_flush_guard = self.last_flush.lock();
-            *last_flush_guard = Instant::now();
-        } else {
-            // 同步模式：直接写入
-            let mut stdout_guard = self.stdout.lock();
-            stdout_guard.write_all(data)
-                .map_err(|e| format!("同步写入失败: {}", e))?;
-            stdout_guard.flush()
-                .map_err(|e| format!("同步刷新失败: {}", e))?;
-        }
-
+    /// 写入到终端
+    fn write_to_terminal(&self, data: &[u8]) -> Result<(), String> {
+        let mut stdout_guard = self.stdout.lock();
+        stdout_guard.write_all(data)
+            .map_err(|e| format!("终端写入失败: {}", e))?;
+        stdout_guard.flush()
+            .map_err(|e| format!("终端刷新失败: {}", e))?;
         Ok(())
     }
 }
@@ -281,7 +171,7 @@ impl LogProcessor for TermProcessor {
         let formatted_data = self.format_record(&record)?;
 
         // 写入到终端
-        self.write_to_buffer(&formatted_data)
+        self.write_to_terminal(&formatted_data)
     }
 
     fn process_batch(&mut self, batch: &[Vec<u8>]) -> Result<(), String> {
@@ -297,39 +187,18 @@ impl LogProcessor for TermProcessor {
         }
 
         // 批量写入
-        self.write_to_buffer(&all_data)
+        self.write_to_terminal(&all_data)
     }
 
     fn flush(&mut self) -> Result<(), String> {
-        if self.config.enable_async {
-            // 异步模式：刷新缓冲区
-            let mut buffer_guard = self.buffer.lock();
-            if !buffer_guard.is_empty() {
-                let mut stdout_guard = self.stdout.lock();
-                stdout_guard.write_all(buffer_guard.as_slice())
-                    .map_err(|e| format!("刷新写入失败: {}", e))?;
-                stdout_guard.flush()
-                    .map_err(|e| format!("刷新失败: {}", e))?;
-                buffer_guard.clear();
-            }
-
-            // 更新最后刷新时间
-            let mut last_flush_guard = self.last_flush.lock();
-            *last_flush_guard = Instant::now();
-        } else {
-            // 同步模式：直接刷新
-            let mut stdout_guard = self.stdout.lock();
-            stdout_guard.flush()
-                .map_err(|e| format!("同步刷新失败: {}", e))?;
-        }
-
+        // 直接刷新终端
+        let mut stdout_guard = self.stdout.lock();
+        stdout_guard.flush()
+            .map_err(|e| format!("终端刷新失败: {}", e))?;
         Ok(())
     }
 
     fn cleanup(&mut self) -> Result<(), String> {
-        // 停止异步刷新线程
-        self.is_running.store(false, Ordering::Relaxed);
-
         // 刷新所有剩余数据
         self.flush()
     }

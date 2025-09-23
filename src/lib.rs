@@ -91,6 +91,7 @@ pub fn __private_log_impl(
     file: &'static str,
     line: u32,
 ) {
+    // 检查全局日志器的配置
     if let Some(logger) = core::LOGGER.lock().unwrap().as_ref() {
         let record = Record {
             metadata: std::sync::Arc::new(Metadata {
@@ -104,6 +105,7 @@ pub fn __private_log_impl(
             file: Some(file.to_string()),
             line: Some(line),
         };
+
         logger.log(&record);
     }
 }

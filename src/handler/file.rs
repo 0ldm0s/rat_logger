@@ -251,6 +251,11 @@ impl FileProcessor {
                     }
                     break;
                 }
+
+                crate::producer_consumer::LogCommand::HealthCheck(response_sender) => {
+                    // 健康检查：立即响应，表示工作线程正常运行
+                    let _ = response_sender.send(true);
+                }
             }
         }
     }

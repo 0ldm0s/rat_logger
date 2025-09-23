@@ -107,6 +107,8 @@ pub struct ProcessorWorker {
     sender: Sender<LogCommand>,
     worker_thread: Option<thread::JoinHandle<()>>,
     config: BatchConfig,
+    /// 处理器类型名称
+    processor_type: String,
 }
 
 impl ProcessorWorker {
@@ -132,6 +134,7 @@ impl ProcessorWorker {
             sender,
             worker_thread: Some(worker_thread),
             config,
+            processor_type: processor_name.to_string(),
         }
     }
 
@@ -153,7 +156,7 @@ impl ProcessorWorker {
                 LogCommand::Write(data) => {
                     batch_buffer.push(data);
 
-                    // 批量写入条件：达到8KB或100ms间隔 - 保持原有逻辑
+                    // 批量写入条件：达到batch_size或时间间隔
                     if batch_buffer.len() >= config.batch_size ||
                        last_flush.elapsed() >= flush_interval {
                         if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
@@ -226,6 +229,11 @@ impl ProcessorWorker {
                     }
                     break;
                 }
+
+                LogCommand::HealthCheck(response_sender) => {
+                    // 健康检查：立即响应，表示工作线程正常运行
+                    let _ = response_sender.send(true);
+                }
             }
         }
     }
@@ -293,6 +301,45 @@ impl ProcessorWorker {
     pub fn config(&self) -> &BatchConfig {
         &self.config
     }
+
+    /// 获取处理器类型
+    pub fn get_processor_type(&self) -> &str {
+        &self.processor_type
+    }
+
+    /// 执行健康检查，验证工作线程是否正常运行
+    pub fn health_check(&self, timeout_ms: u64) -> Result<(), String> {
+        let (response_sender, response_receiver) = unbounded();
+
+        // 发送健康检查命令
+        let command = LogCommand::HealthCheck(response_sender);
+        self.sender.send(command)
+            .map_err(|e| format!("发送健康检查命令失败: {}", e))?;
+
+        // 等待响应
+        let timeout = Duration::from_millis(timeout_ms);
+        match response_receiver.recv_timeout(timeout) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("工作线程响应异常".to_string()),
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                Err(format!("健康检查超时（{}ms）", timeout_ms))
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                Err("工作线程已断开连接".to_string())
+            }
+        }
+    }
+}
+
+impl Clone for ProcessorWorker {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            worker_thread: None, // 不克隆工作线程，只克隆发送者
+            config: self.config.clone(),
+            processor_type: self.processor_type.clone(),
+        }
+    }
 }
 
 impl Drop for ProcessorWorker {
@@ -310,6 +357,8 @@ impl Drop for ProcessorWorker {
 /// 处理器管理器 - 管理所有处理器的工作线程
 pub struct ProcessorManager {
     workers: Vec<ProcessorWorker>,
+    /// 已验证的处理器类型集合
+    verified_types: std::collections::HashSet<String>,
 }
 
 impl ProcessorManager {
@@ -317,6 +366,7 @@ impl ProcessorManager {
     pub fn new() -> Self {
         Self {
             workers: Vec::new(),
+            verified_types: std::collections::HashSet::new(),
         }
     }
 
@@ -325,8 +375,13 @@ impl ProcessorManager {
     where
         P: LogProcessor + Send + 'static,
     {
+        let processor_type = processor.name().to_string();
         let worker = ProcessorWorker::new(processor, config);
         self.workers.push(worker);
+
+        // 新增处理器类型，需要重新验证
+        self.verified_types.remove(&processor_type);
+
         Ok(())
     }
 
@@ -383,6 +438,142 @@ impl ProcessorManager {
     /// 获取处理器数量
     pub fn len(&self) -> usize {
         self.workers.len()
+    }
+
+    /// 智能健康检查：只检查未验证的处理器类型
+    pub fn smart_health_check(&self, timeout_ms: u64) -> Result<Vec<String>, String> {
+        if self.workers.is_empty() {
+            return Ok(vec![]); // 没有处理器，无需检查
+        }
+
+        // 找出所有未验证的处理器类型
+        let mut unverified_types = std::collections::HashSet::new();
+        for worker in &self.workers {
+            let worker_type = worker.get_processor_type();
+            if !self.verified_types.contains(worker_type) {
+                unverified_types.insert(worker_type.to_string());
+            }
+        }
+
+        if unverified_types.is_empty() {
+            return Ok(vec![]); // 所有类型都已验证
+        }
+
+        // 为每种未验证的类型选择一个代表进行健康检查
+        let mut handles = Vec::new();
+        for processor_type in &unverified_types {
+            // 找到该类型的第一个工作线程
+            if let Some(worker) = self.workers.iter()
+                .find(|w| w.get_processor_type() == *processor_type) {
+
+                let worker_clone = worker.clone();
+                let type_name_for_closure = processor_type.clone();
+                let handle = std::thread::spawn(move || {
+                    // 执行健康检查
+                    worker_clone.health_check(timeout_ms)
+                        .map_err(|e| format!("处理器类型[{}]健康检查失败: {}", type_name_for_closure, e))
+                });
+                handles.push((processor_type.clone(), handle));
+            }
+        }
+
+        // 等待所有健康检查完成
+        let mut newly_verified = Vec::new();
+        let mut failed_checks = Vec::new();
+
+        for (processor_type, handle) in handles {
+            match handle.join() {
+                Ok(Ok(_)) => {
+                    newly_verified.push(processor_type);
+                }
+                Ok(Err(e)) => {
+                    failed_checks.push(e);
+                }
+                Err(_) => {
+                    failed_checks.push(format!("处理器类型[{}]健康检查线程崩溃", processor_type));
+                }
+            }
+        }
+
+        if failed_checks.is_empty() {
+            Ok(newly_verified)
+        } else {
+            Err(format!("健康检查失败：{}", failed_checks.join("; ")))
+        }
+    }
+
+    /// 标记处理器类型为已验证
+    pub fn mark_as_verified(&mut self, processor_types: &[String]) {
+        for processor_type in processor_types {
+            self.verified_types.insert(processor_type.clone());
+        }
+    }
+
+    /// 检查特定的处理器类型
+    pub fn check_specific_types(&self, expected_types: &[String], timeout_ms: u64) -> Result<(), String> {
+        if self.workers.is_empty() {
+            return Ok(()); // 没有处理器，无需检查
+        }
+
+        // 检查是否有预期的处理器类型存在
+        let mut found_types = std::collections::HashSet::new();
+        for worker in &self.workers {
+            let worker_type = worker.get_processor_type();
+            if expected_types.contains(&worker_type.to_string()) {
+                found_types.insert(worker_type.to_string());
+            }
+        }
+
+        // 验证所有预期的类型都找到了
+        let missing_types: Vec<String> = expected_types.iter()
+            .filter(|t| !found_types.contains(*t))
+            .cloned()
+            .collect();
+
+        if !missing_types.is_empty() {
+            return Err(format!("未找到预期的处理器类型: {}", missing_types.join(", ")));
+        }
+
+        // 对每种预期的处理器类型进行健康检查
+        let mut handles = Vec::new();
+        for processor_type in expected_types {
+            // 找到该类型的第一个工作线程
+            if let Some(worker) = self.workers.iter()
+                .find(|w| w.get_processor_type() == *processor_type) {
+
+                let worker_clone = worker.clone();
+                let type_name_for_closure = processor_type.clone();
+                let handle = std::thread::spawn(move || {
+                    // 执行健康检查
+                    worker_clone.health_check(timeout_ms)
+                        .map_err(|e| format!("处理器类型[{}]健康检查失败: {}", type_name_for_closure, e))
+                });
+                handles.push((processor_type.clone(), handle));
+            }
+        }
+
+        // 等待所有健康检查完成
+        let mut failed_checks = Vec::new();
+
+        for (processor_type, handle) in handles {
+            match handle.join() {
+                Ok(Ok(_)) => {
+                    // 成功，继续检查下一个
+                }
+                Ok(Err(e)) => {
+                    failed_checks.push(e);
+                }
+                Err(_) => {
+                    failed_checks.push(format!("处理器类型[{}]健康检查线程崩溃", processor_type));
+                }
+            }
+        }
+
+        if failed_checks.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("健康检查失败：{}", failed_checks.join("; ")))
+        }
     }
 
     /// 检查是否为空
