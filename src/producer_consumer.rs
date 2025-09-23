@@ -201,23 +201,18 @@ impl ProcessorWorker {
     ) where
         P: LogProcessor + Send + 'static,
     {
-        eprintln!("DEBUG: [{}] 工作线程启动，配置: batch_size={}, batch_interval_ms={}ms",
-                 processor_name, config.batch_size, config.batch_interval_ms);
-
         // 发送就绪通知
         increment_ready_count();
-        eprintln!("DEBUG: [{}] 已发送就绪通知，当前就绪数量: {}", processor_name, get_ready_count());
         let mut batch_buffer = Vec::with_capacity(config.buffer_size);
         let mut last_flush = Instant::now();
         let flush_interval = Duration::from_millis(config.batch_interval_ms);
 
-        while let Ok(command) = receiver.recv() {
-            eprintln!("DEBUG: [{}] 收到命令: {:?}", processor_name, command);
-            if let LogCommand::Write(ref data) = command {
-                eprintln!("DEBUG: [{}] 收到Write命令，数据长度: {}", processor_name, data.len());
-            }
+        loop {
+            // 使用recv_timeout来定期检查时间间隔
+            let command = receiver.recv_timeout(Duration::from_millis(100));
+
             match command {
-                LogCommand::Write(data) => {
+                Ok(LogCommand::Write(data)) => {
                     batch_buffer.push(data);
 
                     // 批量写入条件：达到batch_size或时间间隔
@@ -229,8 +224,27 @@ impl ProcessorWorker {
                         last_flush = Instant::now();
                     }
                 }
+                Ok(LogCommand::WriteForce(data)) => {
+                    // 强制写入：立即处理缓冲区中的数据，然后立即处理当前数据
+                    if !batch_buffer.is_empty() {
+                        if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
+                            eprintln!("[{}] WriteForce前批量处理失败: {}", processor_name, e);
+                        }
+                        batch_buffer.clear();
+                    }
 
-                LogCommand::Rotate => {
+                    // 立即处理当前数据
+                    if let Err(e) = processor.process(&data) {
+                        eprintln!("[{}] WriteForce直接处理失败: {}", processor_name, e);
+                    }
+
+                    // 立即刷新
+                    if let Err(e) = processor.flush() {
+                        eprintln!("[{}] WriteForce刷新失败: {}", processor_name, e);
+                    }
+                    last_flush = Instant::now();
+                }
+                Ok(LogCommand::Rotate) => {
                     // 先处理缓冲区中的数据 - 保持原有逻辑
                     if !batch_buffer.is_empty() {
                         if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
@@ -245,7 +259,7 @@ impl ProcessorWorker {
                     }
                 }
 
-                LogCommand::Compress(path) => {
+                Ok(LogCommand::Compress(path)) => {
                     // 先处理缓冲区中的数据 - 保持原有逻辑
                     if !batch_buffer.is_empty() {
                         if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
@@ -260,7 +274,7 @@ impl ProcessorWorker {
                     }
                 }
 
-                LogCommand::Flush => {
+                Ok(LogCommand::Flush) => {
                     // 写入剩余数据 - 保持原有逻辑
                     if !batch_buffer.is_empty() {
                         if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
@@ -276,9 +290,7 @@ impl ProcessorWorker {
                     last_flush = Instant::now();
                 }
 
-                LogCommand::Shutdown(source) => {
-                    // 显示Shutdown命令的来源
-                    eprintln!("DEBUG: [{}] 收到Shutdown命令，来源: {}", processor_name, source);
+                Ok(LogCommand::Shutdown(source)) => {
                     // 处理剩余数据并退出 - 保持原有逻辑
                     if !batch_buffer.is_empty() {
                         if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
@@ -296,9 +308,22 @@ impl ProcessorWorker {
                     break;
                 }
 
-                LogCommand::HealthCheck(response_sender) => {
+                Ok(LogCommand::HealthCheck(response_sender)) => {
                     // 健康检查：立即响应，表示工作线程正常运行
                     let _ = response_sender.send(true);
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    // 超时：检查是否达到时间间隔
+                    if !batch_buffer.is_empty() && last_flush.elapsed() >= flush_interval {
+                        if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
+                            eprintln!("[{}] 超时批量处理失败: {}", processor_name, e);
+                        }
+                        last_flush = Instant::now();
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    // 通道断开，退出循环
+                    break;
                 }
             }
         }
@@ -347,6 +372,14 @@ impl ProcessorWorker {
         let command = LogCommand::Flush;
         self.sender.send(command)
             .map_err(|e| format!("发送刷新命令失败: {}", e))?;
+        Ok(())
+    }
+
+    /// 发送强制写入命令（忽略批量限制）
+    pub fn send_write_force(&self, data: Vec<u8>) -> Result<(), String> {
+        let command = LogCommand::WriteForce(data);
+        self.sender.send(command)
+            .map_err(|e| format!("发送强制写入命令失败: {}", e))?;
         Ok(())
     }
 
@@ -400,7 +433,6 @@ impl ProcessorWorker {
 // ProcessorWorker 不应该实现 Clone，因为每个实例代表一个真实的工作线程
 // impl Clone for ProcessorWorker {
 //     fn clone(&self) -> Self {
-//         eprintln!("DEBUG: ProcessorWorker::clone 被调用！这将导致worker_thread被设置为None！");
 //         Self {
 //             sender: self.sender.clone(),
 //             worker_thread: None, // 不克隆工作线程，只克隆发送者
@@ -455,16 +487,21 @@ impl ProcessorManager {
 
     /// 广播写入命令给所有处理器
     pub fn broadcast_write(&self, data: Vec<u8>) -> Result<(), String> {
-        eprintln!("DEBUG: broadcast_write 被调用，workers数量: {}, 数据长度: {}", self.workers.len(), data.len());
-        for (i, worker) in self.workers.iter().enumerate() {
-            eprintln!("DEBUG: 发送Write命令给worker {}", i);
+        for worker in &self.workers {
             if let Err(e) = worker.send_write(data.clone()) {
-                eprintln!("DEBUG: 发送Write命令给worker {} 失败: {}", i, e);
                 return Err(e);
             }
-            eprintln!("DEBUG: 发送Write命令给worker {} 成功", i);
         }
-        eprintln!("DEBUG: broadcast_write 完成");
+        Ok(())
+    }
+
+    /// 广播强制写入命令给所有处理器（忽略批量限制）
+    pub fn broadcast_write_force(&self, data: Vec<u8>) -> Result<(), String> {
+        for worker in &self.workers {
+            if let Err(e) = worker.send_write_force(data.clone()) {
+                return Err(e);
+            }
+        }
         Ok(())
     }
 
@@ -550,9 +587,6 @@ impl ProcessorManager {
 
     /// 检查特定处理器类型的健康状态（简化版，使用智能健康检查）
     pub fn check_specific_types(&self, expected_types: &[String], timeout_ms: u64) -> Result<(), String> {
-        eprintln!("DEBUG: check_specific_types 被调用，expected_types: {:?}", expected_types);
-        eprintln!("DEBUG: 当前已验证的类型: {:?}", self.verified_types);
-        eprintln!("DEBUG: 当前工作线程数量: {}", self.workers.len());
 
         // 过滤出预期的处理器类型
         let expected_set: std::collections::HashSet<&str> = expected_types.iter().map(|s| s.as_str()).collect();
@@ -562,36 +596,29 @@ impl ProcessorManager {
             let worker_type = worker.get_processor_type();
             let is_expected = expected_set.contains(worker_type);
             let is_verified = self.verified_types.contains(worker_type);
-            eprintln!("DEBUG: 工作线程类型: {}, 预期: {}, 已验证: {}", worker_type, is_expected, is_verified);
 
             if is_expected && !is_verified {
                 expected_workers.push(worker_type.to_string());
             }
         }
 
-        eprintln!("DEBUG: 预期但未验证的工作线程数量: {}", expected_workers.len());
 
         if expected_workers.is_empty() {
-            eprintln!("DEBUG: 所有预期的处理器都已验证，跳过等待");
             return Ok(()); // 所有预期的处理器都已验证
         }
 
         // 计算还需要等待的工作线程数量
         let current_ready = get_ready_count();
         let remaining = expected_workers.len().saturating_sub(current_ready);
-        eprintln!("DEBUG: 当前已就绪数量: {}, 预期总数: {}, 还需要等待: {}", current_ready, expected_workers.len(), remaining);
 
         if remaining == 0 {
-            eprintln!("DEBUG: 所有工作线程已经就绪，无需等待");
             return Ok(());
         }
 
         // 设置预期数量并等待剩余的工作线程
-        eprintln!("DEBUG: 设置剩余预期数量为: {}", remaining);
         set_expected_worker_count(remaining);
 
         // 等待所有预期工作线程就绪
-        eprintln!("DEBUG: 开始等待剩余工作线程就绪...");
         wait_for_all_ready(timeout_ms)?;
 
         Ok(())

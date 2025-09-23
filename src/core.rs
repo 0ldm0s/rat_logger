@@ -33,6 +33,8 @@ pub mod processor_types {
 pub enum LogCommand {
     /// 写入日志数据
     Write(Vec<u8>),
+    /// 强制写入日志数据（忽略批量限制）
+    WriteForce(Vec<u8>),
     /// 文件轮转
     Rotate,
     /// 文件压缩
@@ -139,32 +141,23 @@ impl LoggerCore {
 
 impl Logger for LoggerCore {
     fn log(&self, record: &Record) {
-        eprintln!("DEBUG: LoggerCore::log 被调用，level: {:?}", record.metadata.level);
         if self.should_log(&record.metadata.level) {
-            eprintln!("DEBUG: 级别检查通过");
             // Error级别日志自动使用紧急模式
             if record.metadata.level == crate::config::Level::Error {
-                eprintln!("DEBUG: 检测到Error级别，使用紧急模式");
                 self.emergency_log(record);
                 return;
             }
 
             // 序列化日志数据并发送给所有处理器
             if let Ok(data) = bincode::encode_to_vec(record, bincode::config::standard()) {
-                eprintln!("DEBUG: 序列化成功，数据长度: {}", data.len());
                 let _ = self.processor_manager.broadcast_write(data);
-                eprintln!("DEBUG: 广播写入完成");
 
                 // 开发模式：同步等待日志处理完成
                 if self.dev_mode {
                     self.flush();
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
-            } else {
-                eprintln!("DEBUG: 序列化失败");
             }
-        } else {
-            eprintln!("DEBUG: 级别检查失败");
         }
     }
 
@@ -183,29 +176,17 @@ impl Logger for LoggerCore {
     }
 
     fn force_flush(&self) {
-        eprintln!("DEBUG: force_flush 被调用");
         // 强制刷新所有处理器，无视批量配置
         let _ = self.processor_manager.broadcast_flush();
-        eprintln!("DEBUG: force_flush 广播刷新完成");
         // 给处理器一些时间来完成刷新
         std::thread::sleep(std::time::Duration::from_millis(50));
-        eprintln!("DEBUG: force_flush 等待完成");
     }
 
     fn emergency_log(&self, record: &Record) {
-        eprintln!("DEBUG: emergency_log 被调用");
         // 紧急日志：直接发送并立即刷新，无视级别检查和批量配置
         if let Ok(data) = bincode::encode_to_vec(record, bincode::config::standard()) {
-            eprintln!("DEBUG: emergency_log 序列化成功，数据长度: {}", data.len());
-            // 直接发送给所有处理器，要求立即处理
-            let _ = self.processor_manager.broadcast_write(data);
-            eprintln!("DEBUG: emergency_log 广播写入完成");
-            // 立即刷新
-            eprintln!("DEBUG: emergency_log 开始强制刷新");
-            self.force_flush();
-            eprintln!("DEBUG: emergency_log 强制刷新完成");
-        } else {
-            eprintln!("DEBUG: emergency_log 序列化失败");
+            // 直接发送给所有处理器，使用强制写入命令（忽略批量限制）
+            let _ = self.processor_manager.broadcast_write_force(data);
         }
     }
 }
@@ -383,12 +364,9 @@ impl LoggerBuilder {
         let logger = Arc::new(self.build());
 
         // 开发模式下允许重新初始化
-        eprintln!("DEBUG: 检查开发模式分支: is_dev_mode={}, cfg!(debug_assertions)={}", is_dev_mode, cfg!(debug_assertions));
         if is_dev_mode && cfg!(debug_assertions) {
-            eprintln!("DEBUG: 进入开发模式分支");
             set_logger_dev(logger)?;
         } else {
-            eprintln!("DEBUG: 进入生产模式分支");
             // 生产模式：允许重新初始化以应对程序多次运行的情况
             let _lock = LOGGER_LOCK.write().unwrap();
             let mut guard = LOGGER.lock().unwrap();
