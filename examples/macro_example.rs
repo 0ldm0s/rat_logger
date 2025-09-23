@@ -5,7 +5,7 @@
 //! ⚠️  重要提醒：
 //! - 本示例启用开发模式以确保日志立即输出，方便演示和学习
 //! - 在生产环境中，请禁用开发模式以获得最佳性能
-//! - 生产环境推荐：LoggerBuilder::new().add_terminal().init()
+//! - 生产环境推荐：LoggerBuilder::new().add_terminal_with_config(rat_logger::handler::term::TermConfig::default()).init()
 
 use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, error, warn, info, debug, trace, Logger};
 use std::path::PathBuf;

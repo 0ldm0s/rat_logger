@@ -5,7 +5,7 @@
 //! ⚠️  重要提醒：
 //! - 本示例启用开发模式以确保日志立即输出，方便演示和学习
 //! - 在生产环境中，请禁用开发模式以获得最佳性能
-//! - 生产环境推荐：LoggerBuilder::new().add_terminal().add_file(config).build()
+//! - 生产环境推荐：LoggerBuilder::new().add_terminal_with_config(rat_logger::handler::term::TermConfig::default()).add_file(config).build()
 
 use rat_logger::{LoggerBuilder, LevelFilter, FileConfig, Logger};
 use rat_logger::config::Record;
@@ -32,7 +32,7 @@ fn main() {
     let logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
         .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
-        .add_terminal()  // 添加终端输出
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig::default())  // 添加终端输出
         .add_file(file_config)  // 添加文件输出
         .build();
 

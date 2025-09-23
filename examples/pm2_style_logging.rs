@@ -76,7 +76,7 @@ fn main() {
     let main_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
         // .with_dev_mode(true) // 注释掉开发模式，使用正常的批量处理模式
-        .add_terminal()  // 终端输出
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig::default())  // 终端输出
         .add_file(main_app_config.clone())
         .build();
 

@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let logger1 = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
         .with_dev_mode(true)
-        .add_terminal()
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig::default())
         .build();
 
     logger1.log(&create_test_record(Level::Error, "default_test", "错误消息"));
