@@ -5,9 +5,63 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use crossbeam_channel::{Sender, Receiver, unbounded};
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
 
 // 重新导出core模块中的LogCommand
 pub use crate::core::LogCommand;
+
+/// 全局工作线程就绪计数器
+static WORKER_READY_COUNT: Lazy<std::sync::atomic::AtomicUsize> = Lazy::new(|| {
+    std::sync::atomic::AtomicUsize::new(0)
+});
+
+/// 全局预期工作线程数量
+static EXPECTED_WORKER_COUNT: Lazy<std::sync::atomic::AtomicUsize> = Lazy::new(|| {
+    std::sync::atomic::AtomicUsize::new(0)
+});
+
+/// 增加就绪计数器
+pub fn increment_ready_count() {
+    WORKER_READY_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// 设置预期工作线程数量
+pub fn set_expected_worker_count(count: usize) {
+    EXPECTED_WORKER_COUNT.store(count, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// 获取就绪工作线程数量
+pub fn get_ready_count() -> usize {
+    WORKER_READY_COUNT.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// 重置就绪计数器
+pub fn reset_ready_count() {
+    WORKER_READY_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// 等待所有工作线程就绪
+pub fn wait_for_all_ready(timeout_ms: u64) -> Result<(), String> {
+    let expected = EXPECTED_WORKER_COUNT.load(std::sync::atomic::Ordering::SeqCst);
+    if expected == 0 {
+        return Ok(());
+    }
+
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_millis(timeout_ms);
+
+    while start.elapsed() < timeout {
+        let ready = get_ready_count();
+        if ready >= expected {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    let ready = get_ready_count();
+    Err(format!("工作线程就绪超时（{}/{}个）", ready, expected))
+}
 
 /// 批量处理配置
 #[derive(Debug, Clone)]
@@ -147,11 +201,21 @@ impl ProcessorWorker {
     ) where
         P: LogProcessor + Send + 'static,
     {
+        eprintln!("DEBUG: [{}] 工作线程启动，配置: batch_size={}, batch_interval_ms={}ms",
+                 processor_name, config.batch_size, config.batch_interval_ms);
+
+        // 发送就绪通知
+        increment_ready_count();
+        eprintln!("DEBUG: [{}] 已发送就绪通知，当前就绪数量: {}", processor_name, get_ready_count());
         let mut batch_buffer = Vec::with_capacity(config.buffer_size);
         let mut last_flush = Instant::now();
         let flush_interval = Duration::from_millis(config.batch_interval_ms);
 
         while let Ok(command) = receiver.recv() {
+            eprintln!("DEBUG: [{}] 收到命令: {:?}", processor_name, command);
+            if let LogCommand::Write(ref data) = command {
+                eprintln!("DEBUG: [{}] 收到Write命令，数据长度: {}", processor_name, data.len());
+            }
             match command {
                 LogCommand::Write(data) => {
                     batch_buffer.push(data);
@@ -212,7 +276,9 @@ impl ProcessorWorker {
                     last_flush = Instant::now();
                 }
 
-                LogCommand::Shutdown => {
+                LogCommand::Shutdown(source) => {
+                    // 显示Shutdown命令的来源
+                    eprintln!("DEBUG: [{}] 收到Shutdown命令，来源: {}", processor_name, source);
                     // 处理剩余数据并退出 - 保持原有逻辑
                     if !batch_buffer.is_empty() {
                         if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
@@ -286,7 +352,7 @@ impl ProcessorWorker {
 
     /// 发送停止命令
     pub fn send_shutdown(&self) -> Result<(), String> {
-        let command = LogCommand::Shutdown;
+        let command = LogCommand::Shutdown("ProcessorWorker::send_shutdown");
         self.sender.send(command)
             .map_err(|e| format!("发送停止命令失败: {}", e))?;
         Ok(())
@@ -331,21 +397,23 @@ impl ProcessorWorker {
     }
 }
 
-impl Clone for ProcessorWorker {
-    fn clone(&self) -> Self {
-        Self {
-            sender: self.sender.clone(),
-            worker_thread: None, // 不克隆工作线程，只克隆发送者
-            config: self.config.clone(),
-            processor_type: self.processor_type.clone(),
-        }
-    }
-}
+// ProcessorWorker 不应该实现 Clone，因为每个实例代表一个真实的工作线程
+// impl Clone for ProcessorWorker {
+//     fn clone(&self) -> Self {
+//         eprintln!("DEBUG: ProcessorWorker::clone 被调用！这将导致worker_thread被设置为None！");
+//         Self {
+//             sender: self.sender.clone(),
+//             worker_thread: None, // 不克隆工作线程，只克隆发送者
+//             config: self.config.clone(),
+//             processor_type: self.processor_type.clone(),
+//         }
+//     }
+// }
 
 impl Drop for ProcessorWorker {
     fn drop(&mut self) {
         // 发送停止命令
-        let _ = self.sender.send(LogCommand::Shutdown);
+        let _ = self.sender.send(LogCommand::Shutdown("ProcessorWorker::drop"));
 
         // 等待工作线程结束
         if let Some(thread) = self.worker_thread.take() {
@@ -387,11 +455,16 @@ impl ProcessorManager {
 
     /// 广播写入命令给所有处理器
     pub fn broadcast_write(&self, data: Vec<u8>) -> Result<(), String> {
-        for worker in &self.workers {
+        eprintln!("DEBUG: broadcast_write 被调用，workers数量: {}, 数据长度: {}", self.workers.len(), data.len());
+        for (i, worker) in self.workers.iter().enumerate() {
+            eprintln!("DEBUG: 发送Write命令给worker {}", i);
             if let Err(e) = worker.send_write(data.clone()) {
+                eprintln!("DEBUG: 发送Write命令给worker {} 失败: {}", i, e);
                 return Err(e);
             }
+            eprintln!("DEBUG: 发送Write命令给worker {} 成功", i);
         }
+        eprintln!("DEBUG: broadcast_write 完成");
         Ok(())
     }
 
@@ -426,7 +499,7 @@ impl ProcessorManager {
     }
 
     /// 广播停止命令给所有处理器
-    pub fn broadcast_shutdown(&self) -> Result<(), String> {
+    pub fn broadcast_shutdown(&self, source: &'static str) -> Result<(), String> {
         for worker in &self.workers {
             if let Err(e) = worker.send_shutdown() {
                 return Err(e);
@@ -440,66 +513,32 @@ impl ProcessorManager {
         self.workers.len()
     }
 
-    /// 智能健康检查：只检查未验证的处理器类型
+    /// 智能健康检查：被动等待工作线程就绪通知
     pub fn smart_health_check(&self, timeout_ms: u64) -> Result<Vec<String>, String> {
-        if self.workers.is_empty() {
-            return Ok(vec![]); // 没有处理器，无需检查
-        }
+        // 设置预期的工作线程数量（未验证的处理器类型）
+        let mut unverified_count = 0;
+        let mut newly_verified = Vec::new();
 
-        // 找出所有未验证的处理器类型
-        let mut unverified_types = std::collections::HashSet::new();
         for worker in &self.workers {
             let worker_type = worker.get_processor_type();
             if !self.verified_types.contains(worker_type) {
-                unverified_types.insert(worker_type.to_string());
+                unverified_count += 1;
+                newly_verified.push(worker_type.to_string());
             }
         }
 
-        if unverified_types.is_empty() {
-            return Ok(vec![]); // 所有类型都已验证
+        if unverified_count == 0 {
+            return Ok(vec![]); // 没有需要验证的处理器
         }
 
-        // 为每种未验证的类型选择一个代表进行健康检查
-        let mut handles = Vec::new();
-        for processor_type in &unverified_types {
-            // 找到该类型的第一个工作线程
-            if let Some(worker) = self.workers.iter()
-                .find(|w| w.get_processor_type() == *processor_type) {
+        // 重置计数器并设置预期数量
+        reset_ready_count();
+        set_expected_worker_count(unverified_count);
 
-                let worker_clone = worker.clone();
-                let type_name_for_closure = processor_type.clone();
-                let handle = std::thread::spawn(move || {
-                    // 执行健康检查
-                    worker_clone.health_check(timeout_ms)
-                        .map_err(|e| format!("处理器类型[{}]健康检查失败: {}", type_name_for_closure, e))
-                });
-                handles.push((processor_type.clone(), handle));
-            }
-        }
+        // 等待所有工作线程就绪
+        wait_for_all_ready(timeout_ms)?;
 
-        // 等待所有健康检查完成
-        let mut newly_verified = Vec::new();
-        let mut failed_checks = Vec::new();
-
-        for (processor_type, handle) in handles {
-            match handle.join() {
-                Ok(Ok(_)) => {
-                    newly_verified.push(processor_type);
-                }
-                Ok(Err(e)) => {
-                    failed_checks.push(e);
-                }
-                Err(_) => {
-                    failed_checks.push(format!("处理器类型[{}]健康检查线程崩溃", processor_type));
-                }
-            }
-        }
-
-        if failed_checks.is_empty() {
-            Ok(newly_verified)
-        } else {
-            Err(format!("健康检查失败：{}", failed_checks.join("; ")))
-        }
+        Ok(newly_verified)
     }
 
     /// 标记处理器类型为已验证
@@ -509,71 +548,53 @@ impl ProcessorManager {
         }
     }
 
-    /// 检查特定的处理器类型
+    /// 检查特定处理器类型的健康状态（简化版，使用智能健康检查）
     pub fn check_specific_types(&self, expected_types: &[String], timeout_ms: u64) -> Result<(), String> {
-        if self.workers.is_empty() {
-            return Ok(()); // 没有处理器，无需检查
-        }
+        eprintln!("DEBUG: check_specific_types 被调用，expected_types: {:?}", expected_types);
+        eprintln!("DEBUG: 当前已验证的类型: {:?}", self.verified_types);
+        eprintln!("DEBUG: 当前工作线程数量: {}", self.workers.len());
 
-        // 检查是否有预期的处理器类型存在
-        let mut found_types = std::collections::HashSet::new();
+        // 过滤出预期的处理器类型
+        let expected_set: std::collections::HashSet<&str> = expected_types.iter().map(|s| s.as_str()).collect();
+        let mut expected_workers = Vec::new();
+
         for worker in &self.workers {
             let worker_type = worker.get_processor_type();
-            if expected_types.contains(&worker_type.to_string()) {
-                found_types.insert(worker_type.to_string());
+            let is_expected = expected_set.contains(worker_type);
+            let is_verified = self.verified_types.contains(worker_type);
+            eprintln!("DEBUG: 工作线程类型: {}, 预期: {}, 已验证: {}", worker_type, is_expected, is_verified);
+
+            if is_expected && !is_verified {
+                expected_workers.push(worker_type.to_string());
             }
         }
 
-        // 验证所有预期的类型都找到了
-        let missing_types: Vec<String> = expected_types.iter()
-            .filter(|t| !found_types.contains(*t))
-            .cloned()
-            .collect();
+        eprintln!("DEBUG: 预期但未验证的工作线程数量: {}", expected_workers.len());
 
-        if !missing_types.is_empty() {
-            return Err(format!("未找到预期的处理器类型: {}", missing_types.join(", ")));
+        if expected_workers.is_empty() {
+            eprintln!("DEBUG: 所有预期的处理器都已验证，跳过等待");
+            return Ok(()); // 所有预期的处理器都已验证
         }
 
-        // 对每种预期的处理器类型进行健康检查
-        let mut handles = Vec::new();
-        for processor_type in expected_types {
-            // 找到该类型的第一个工作线程
-            if let Some(worker) = self.workers.iter()
-                .find(|w| w.get_processor_type() == *processor_type) {
+        // 计算还需要等待的工作线程数量
+        let current_ready = get_ready_count();
+        let remaining = expected_workers.len().saturating_sub(current_ready);
+        eprintln!("DEBUG: 当前已就绪数量: {}, 预期总数: {}, 还需要等待: {}", current_ready, expected_workers.len(), remaining);
 
-                let worker_clone = worker.clone();
-                let type_name_for_closure = processor_type.clone();
-                let handle = std::thread::spawn(move || {
-                    // 执行健康检查
-                    worker_clone.health_check(timeout_ms)
-                        .map_err(|e| format!("处理器类型[{}]健康检查失败: {}", type_name_for_closure, e))
-                });
-                handles.push((processor_type.clone(), handle));
-            }
+        if remaining == 0 {
+            eprintln!("DEBUG: 所有工作线程已经就绪，无需等待");
+            return Ok(());
         }
 
-        // 等待所有健康检查完成
-        let mut failed_checks = Vec::new();
+        // 设置预期数量并等待剩余的工作线程
+        eprintln!("DEBUG: 设置剩余预期数量为: {}", remaining);
+        set_expected_worker_count(remaining);
 
-        for (processor_type, handle) in handles {
-            match handle.join() {
-                Ok(Ok(_)) => {
-                    // 成功，继续检查下一个
-                }
-                Ok(Err(e)) => {
-                    failed_checks.push(e);
-                }
-                Err(_) => {
-                    failed_checks.push(format!("处理器类型[{}]健康检查线程崩溃", processor_type));
-                }
-            }
-        }
+        // 等待所有预期工作线程就绪
+        eprintln!("DEBUG: 开始等待剩余工作线程就绪...");
+        wait_for_all_ready(timeout_ms)?;
 
-        if failed_checks.is_empty() {
-            Ok(())
-        } else {
-            Err(format!("健康检查失败：{}", failed_checks.join("; ")))
-        }
+        Ok(())
     }
 
     /// 检查是否为空
@@ -591,7 +612,7 @@ impl Default for ProcessorManager {
 impl Drop for ProcessorManager {
     fn drop(&mut self) {
         // 优雅地关闭所有工作线程
-        let _ = self.broadcast_shutdown();
+        let _ = self.broadcast_shutdown("ProcessorManager::drop");
 
         // 给每个工作线程一些时间来清理资源
         std::thread::sleep(std::time::Duration::from_millis(100));

@@ -23,6 +23,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false, // 异步写入，性能更好
         format: None,
     };
 

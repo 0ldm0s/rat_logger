@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 初始化全局日志器
     LoggerBuilder::new()
         .with_level(LevelFilter::Trace)
-        .with_dev_mode(true)
+        // .with_dev_mode(true)
         .add_terminal_with_config(term_config1)
         .init()?;
 
@@ -99,13 +99,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: true, // 同步写入，确保格式不错位
         format: Some(detailed_format.clone()),
     };
 
     // 重新初始化为文件输出（开发模式允许）
     LoggerBuilder::new()
         .with_level(LevelFilter::Trace)
-        .with_dev_mode(true)
+        // .with_dev_mode(true)
         .add_file(file_config)
         .init()?;
 
@@ -133,12 +134,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: true, // 同步写入，确保格式不错位
         format: Some(detailed_format.clone()),
     };
 
     LoggerBuilder::new()
         .with_level(LevelFilter::Trace)
-        .with_dev_mode(true)
+        // .with_dev_mode(true)
         .add_terminal_with_config(term_config3)
         .add_file(file_config2)
         .init()?;

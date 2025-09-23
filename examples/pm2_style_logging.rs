@@ -26,6 +26,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: true, // 程序结束时强制压缩
+        force_sync: false, // 异步写入，性能更好
         format: None,
     };
 
@@ -39,6 +40,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: true, // 程序结束时强制压缩
+        force_sync: true, // 错误日志同步写入，确保不丢失
         format: None,
     };
 
@@ -52,6 +54,7 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false, // 不在程序结束时压缩
+        force_sync: false, // 异步写入，性能更好
         format: None,
     };
 
@@ -65,13 +68,14 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false, // 不在程序结束时压缩
+        force_sync: false, // 异步写入，性能更好
         format: None,
     };
 
     // 创建主日志器（包含终端输出）
     let main_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
-        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        // .with_dev_mode(true) // 注释掉开发模式，使用正常的批量处理模式
         .add_terminal()  // 终端输出
         .add_file(main_app_config.clone())
         .build();
@@ -79,21 +83,21 @@ fn main() {
     // 创建错误专用日志器
     let error_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Error)  // 只记录错误级别
-        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        // .with_dev_mode(true) // 注释掉开发模式，使用force_sync=true保证数据安全
         .add_file(error_log_config.clone())
         .build();
 
     // 创建访问日志专用日志器
     let access_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
-        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        // .with_dev_mode(true) // 注释掉开发模式，使用批量处理提高性能
         .add_file(access_log_config.clone())
         .build();
 
     // 创建性能监控专用日志器
     let perf_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
-        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        // .with_dev_mode(true) // 注释掉开发模式，使用批量处理提高性能
         .add_file(perf_log_config.clone())
         .build();
 

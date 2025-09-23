@@ -18,6 +18,16 @@ static LOGGER_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
 /// 全局最大日志级别
 static MAX_LEVEL: AtomicUsize = AtomicUsize::new(LevelFilter::Info as usize);
 
+/// 处理器类型名称常量
+pub mod processor_types {
+    /// 终端处理器类型名称
+    pub const TERMINAL: &str = "term_processor";
+    /// 文件处理器类型名称
+    pub const FILE: &str = "file_processor";
+    /// UDP处理器类型名称
+    pub const UDP: &str = "udp_processor";
+}
+
 /// 统一的日志命令枚举
 #[derive(Debug, Clone)]
 pub enum LogCommand {
@@ -30,7 +40,7 @@ pub enum LogCommand {
     /// 强制刷新
     Flush,
     /// 停止工作线程
-    Shutdown,
+    Shutdown(&'static str),
     /// 健康检查（用于初始化时验证工作线程状态）
     HealthCheck(Sender<bool>),
 }
@@ -41,6 +51,12 @@ pub trait Logger: Send + Sync {
     fn flush(&self);
     fn set_level(&self, level: LevelFilter);
     fn level(&self) -> LevelFilter;
+
+    /// 临时强制刷新 - 立即输出所有缓冲的日志，无视批量配置
+    fn force_flush(&self);
+
+    /// 紧急日志 - 无视所有限制立即输出，适用于启动日志和关键错误
+    fn emergency_log(&self, record: &Record);
 }
 
 /// 日志核心实现 - 极简设计
@@ -123,17 +139,32 @@ impl LoggerCore {
 
 impl Logger for LoggerCore {
     fn log(&self, record: &Record) {
+        eprintln!("DEBUG: LoggerCore::log 被调用，level: {:?}", record.metadata.level);
         if self.should_log(&record.metadata.level) {
+            eprintln!("DEBUG: 级别检查通过");
+            // Error级别日志自动使用紧急模式
+            if record.metadata.level == crate::config::Level::Error {
+                eprintln!("DEBUG: 检测到Error级别，使用紧急模式");
+                self.emergency_log(record);
+                return;
+            }
+
             // 序列化日志数据并发送给所有处理器
             if let Ok(data) = bincode::encode_to_vec(record, bincode::config::standard()) {
+                eprintln!("DEBUG: 序列化成功，数据长度: {}", data.len());
                 let _ = self.processor_manager.broadcast_write(data);
+                eprintln!("DEBUG: 广播写入完成");
 
                 // 开发模式：同步等待日志处理完成
                 if self.dev_mode {
                     self.flush();
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
+            } else {
+                eprintln!("DEBUG: 序列化失败");
             }
+        } else {
+            eprintln!("DEBUG: 级别检查失败");
         }
     }
 
@@ -149,6 +180,33 @@ impl Logger for LoggerCore {
 
     fn level(&self) -> LevelFilter {
         self.level
+    }
+
+    fn force_flush(&self) {
+        eprintln!("DEBUG: force_flush 被调用");
+        // 强制刷新所有处理器，无视批量配置
+        let _ = self.processor_manager.broadcast_flush();
+        eprintln!("DEBUG: force_flush 广播刷新完成");
+        // 给处理器一些时间来完成刷新
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        eprintln!("DEBUG: force_flush 等待完成");
+    }
+
+    fn emergency_log(&self, record: &Record) {
+        eprintln!("DEBUG: emergency_log 被调用");
+        // 紧急日志：直接发送并立即刷新，无视级别检查和批量配置
+        if let Ok(data) = bincode::encode_to_vec(record, bincode::config::standard()) {
+            eprintln!("DEBUG: emergency_log 序列化成功，数据长度: {}", data.len());
+            // 直接发送给所有处理器，要求立即处理
+            let _ = self.processor_manager.broadcast_write(data);
+            eprintln!("DEBUG: emergency_log 广播写入完成");
+            // 立即刷新
+            eprintln!("DEBUG: emergency_log 开始强制刷新");
+            self.force_flush();
+            eprintln!("DEBUG: emergency_log 强制刷新完成");
+        } else {
+            eprintln!("DEBUG: emergency_log 序列化失败");
+        }
     }
 }
 
@@ -201,11 +259,7 @@ impl LoggerBuilder {
         self
     }
 
-    /// 添加终端处理器
-    pub fn add_terminal(mut self) -> Self {
-        self.add_terminal_with_config(crate::handler::term::TermConfig::default())
-    }
-
+    
     /// 添加带配置的终端处理器
     pub fn add_terminal_with_config(mut self, config: crate::handler::term::TermConfig) -> Self {
         use crate::handler::term::TermProcessor;
@@ -227,7 +281,7 @@ impl LoggerBuilder {
         if let Err(e) = self.processor_manager.add_processor(processor, batch_config) {
             eprintln!("添加终端处理器失败: {}", e);
         } else {
-            self.expected_processor_types.insert("term".to_string());
+            self.expected_processor_types.insert(processor_types::TERMINAL.to_string());
         }
         self
     }
@@ -253,7 +307,7 @@ impl LoggerBuilder {
         if let Err(e) = self.processor_manager.add_processor(processor, batch_config) {
             eprintln!("添加文件处理器失败: {}", e);
         } else {
-            self.expected_processor_types.insert("file".to_string());
+            self.expected_processor_types.insert(processor_types::FILE.to_string());
         }
         self
     }
@@ -279,7 +333,7 @@ impl LoggerBuilder {
         if let Err(e) = self.processor_manager.add_processor(processor, batch_config) {
             eprintln!("添加UDP处理器失败: {}", e);
         } else {
-            self.expected_processor_types.insert("udp".to_string());
+            self.expected_processor_types.insert(processor_types::UDP.to_string());
         }
         self
     }
@@ -329,22 +383,26 @@ impl LoggerBuilder {
         let logger = Arc::new(self.build());
 
         // 开发模式下允许重新初始化
-        if is_dev_mode || cfg!(debug_assertions) {
+        eprintln!("DEBUG: 检查开发模式分支: is_dev_mode={}, cfg!(debug_assertions)={}", is_dev_mode, cfg!(debug_assertions));
+        if is_dev_mode && cfg!(debug_assertions) {
+            eprintln!("DEBUG: 进入开发模式分支");
             set_logger_dev(logger)?;
         } else {
+            eprintln!("DEBUG: 进入生产模式分支");
             // 生产模式：允许重新初始化以应对程序多次运行的情况
             let _lock = LOGGER_LOCK.write().unwrap();
             let mut guard = LOGGER.lock().unwrap();
 
-            // 如果已存在日志器，先清理再设置新的
+            // 检查是否已经初始化过
             if guard.is_some() {
-                let old_logger = guard.take().unwrap();
-                drop(old_logger);
-                // 给旧日志器一些时间来清理资源
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                // 如果已经初始化过，直接使用现有的日志器
+                // 注意：这里我们放弃新创建的logger，保持现有配置
+                eprintln!("⚠️  警告：全局日志器已经初始化，跳过重复初始化");
+                eprintln!("⚠️  这将导致新创建的LoggerCore被丢弃，ProcessorWorker的Drop trait会被调用！");
+            } else {
+                // 如果没有初始化过，正常设置
+                *guard = Some(logger);
             }
-
-            *guard = Some(logger);
 
             // 智能等待所有工作线程启动就绪
             // 替换原来的固定延时，提供更可靠的等待机制
@@ -421,6 +479,8 @@ impl Logger for NullLogger {
     fn flush(&self) {}
     fn set_level(&self, _level: LevelFilter) {}
     fn level(&self) -> LevelFilter { LevelFilter::Off }
+    fn force_flush(&self) {}
+    fn emergency_log(&self, _record: &Record) {}
 }
 
 /// 设置全局最大日志级别

@@ -25,12 +25,13 @@ fn main() {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false, // 异步写入，性能更好
         format: None,
     };
 
     let logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
-        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        // .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_file(file_config)
         .build();
 

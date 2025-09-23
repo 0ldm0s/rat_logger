@@ -163,15 +163,20 @@ impl LogProcessor for TermProcessor {
     }
 
     fn process(&mut self, data: &[u8]) -> Result<(), String> {
+        eprintln!("DEBUG: TermProcessor::process 被调用，数据长度: {}", data.len());
         // 反序列化日志记录
         let record = bincode::decode_from_slice::<Record, _>(data, bincode::config::standard())
             .map_err(|e| format!("反序列化失败: {}", e))?.0;
+        eprintln!("DEBUG: TermProcessor 反序列化成功: {:?}", record.args);
 
         // 格式化日志记录
         let formatted_data = self.format_record(&record)?;
+        eprintln!("DEBUG: TermProcessor 格式化成功，数据长度: {}", formatted_data.len());
 
         // 写入到终端
-        self.write_to_terminal(&formatted_data)
+        let result = self.write_to_terminal(&formatted_data);
+        eprintln!("DEBUG: TermProcessor 写入结果: {:?}", result);
+        result
     }
 
     fn process_batch(&mut self, batch: &[Vec<u8>]) -> Result<(), String> {

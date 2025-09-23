@@ -17,8 +17,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("1. 初始化全局日志器:");
     LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
-        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
-        .add_terminal()
+        // .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig::default())
         .init()?;
     println!("   ✓ 全局日志器已初始化\n");
 
@@ -59,12 +59,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: true, // 同步写入，确保输出格式正确
         format: None,
     };
 
     let custom_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Trace)
-        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        // .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_terminal()
         .add_file(file_config)
         .build();

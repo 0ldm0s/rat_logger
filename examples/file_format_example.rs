@@ -73,12 +73,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false, // 异步写入，性能更好
         format: None, // 使用默认格式
     };
 
     let logger1 = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
-        .with_dev_mode(true)
+        // .with_dev_mode(true)
         .add_file(file_config1)
         .build();
 
@@ -96,12 +97,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false, // 异步写入，性能更好
         format: Some(simple_format.clone()),
     };
 
     let logger2 = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
-        .with_dev_mode(true)
+        // .with_dev_mode(true)
         .add_file(file_config2)
         .build();
 
@@ -119,12 +121,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false, // 异步写入，性能更好
         format: Some(detailed_format.clone()),
     };
 
     let logger3 = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
-        .with_dev_mode(true)
+        // .with_dev_mode(true)
         .add_file(file_config3)
         .build();
 
@@ -142,12 +145,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false, // 异步写入，性能更好
         format: Some(json_format.clone()),
     };
 
     let logger4 = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
-        .with_dev_mode(true)
+        // .with_dev_mode(true)
         .add_file(file_config4)
         .build();
 

@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("1. 基本终端日志:");
     let terminal_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
-        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        // .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_terminal()
         .build();
 
@@ -48,12 +48,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false, // 异步写入，性能更好
         format: None,
     };
 
     let file_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
-        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        // .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_file(file_config)
         .build();
 
@@ -82,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let network_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Info)
-        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        // .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_udp(network_config)
         .build();
 
@@ -111,12 +112,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         skip_server_logs: false,
         is_raw: false,
         compress_on_drop: false,
+        force_sync: false, // 异步写入，性能更好
         format: None,
     };
 
     let multi_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
-        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        // .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_terminal()
         .add_file(multi_config)
         .build();
@@ -139,7 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n5. 不同级别的日志:");
     let level_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Trace)
-        .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
+        // .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
         .add_terminal()
         .build();
 
