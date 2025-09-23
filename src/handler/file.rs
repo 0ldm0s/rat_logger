@@ -62,54 +62,32 @@ impl Default for FileProcessorConfig {
 
 /// 文件日志处理器 - 实现LogProcessor trait
 pub struct FileProcessor {
-    config: FileProcessorConfig,
+    file_config: FileConfig,
     writer: Arc<Mutex<LogWriter>>,
     rotator: Arc<LogRotator>,
-    buffer: Arc<Mutex<Vec<u8>>>,
-    last_flush: Arc<Mutex<Instant>>,
-    command_sender: Sender<crate::producer_consumer::LogCommand>,
-    writer_thread: Option<thread::JoinHandle<()>>,
     formatter: Box<dyn Fn(&mut dyn Write, &Record) -> io::Result<()> + Send + Sync>,
 }
 
 impl FileProcessor {
     /// 创建新的文件处理器
     pub fn new(config: FileConfig) -> Self {
-        let processor_config = FileProcessorConfig {
-            file_config: config,
-            ..Default::default()
-        };
-        Self::with_config(processor_config)
-    }
-
-    /// 使用配置创建文件处理器
-    pub fn with_config(config: FileProcessorConfig) -> Self {
         // 验证配置，如果失败则直接panic，让用户明确知道配置问题
-        if let Err(e) = config.file_config.validate() {
+        if let Err(e) = config.validate() {
             panic!("FileConfig 验证失败: {}\n请检查您的配置并修复上述问题后再重试。", e);
         }
 
         let writer = Arc::new(Mutex::new(
-            LogWriter::new(&config.file_config.log_dir, config.file_config.max_file_size as usize)
-                .unwrap_or_else(|_| LogWriter::create_default(&config.file_config.log_dir, config.file_config.max_file_size as usize))
+            LogWriter::new(&config.log_dir, config.max_file_size as usize, config.force_sync)
+                .unwrap_or_else(|_| LogWriter::create_default(&config.log_dir, config.max_file_size as usize, config.force_sync))
         ));
 
-        let rotator = Arc::new(LogRotator::new(config.file_config.log_dir.clone(), config.file_config.max_compressed_files));
-
-        let (sender, receiver) = unbounded();
-        let writer_clone = Arc::clone(&writer);
-        let rotator_clone = Arc::clone(&rotator);
-        let config_clone = config.clone();
-
-        let writer_thread = thread::spawn(move || {
-            Self::worker_thread(writer_clone, rotator_clone, receiver, config_clone);
-        });
+        let rotator = Arc::new(LogRotator::new(config.log_dir.clone(), config.max_compressed_files));
 
         // 根据配置设置格式化器，原始模式下使用原始格式
         let formatter: Box<dyn Fn(&mut dyn Write, &Record) -> io::Result<()> + Send + Sync> =
-            if config.file_config.is_raw {
+            if config.is_raw {
                 Box::new(Self::raw_format)
-            } else if let Some(format_config) = &config.file_config.format {
+            } else if let Some(format_config) = &config.format {
                 let format_config = format_config.clone();
                 Box::new(move |buf, record| {
                     Self::format_with_config(buf, record, &format_config)
@@ -119,158 +97,28 @@ impl FileProcessor {
             };
 
         Self {
-            config,
+            file_config: config,
             writer,
             rotator,
-            buffer: Arc::new(Mutex::new(Vec::with_capacity(8192))),
-            last_flush: Arc::new(Mutex::new(Instant::now())),
-            command_sender: sender,
-            writer_thread: Some(writer_thread),
             formatter,
         }
     }
 
-    /// 设置批量大小
-    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
-        self.config.batch_size = batch_size;
-        self
-    }
-
-    /// 设置刷新间隔
-    pub fn with_flush_interval(mut self, flush_interval_ms: u64) -> Self {
-        self.config.flush_interval_ms = flush_interval_ms;
-        self
-    }
-
-    /// 工作线程 - 处理所有文件操作
-    fn worker_thread(
-        writer: Arc<Mutex<LogWriter>>,
-        rotator: Arc<LogRotator>,
-        receiver: Receiver<crate::producer_consumer::LogCommand>,
-        config: FileProcessorConfig,
-    ) {
-        let mut batch_buffer = Vec::with_capacity(config.batch_size);
-        let mut last_flush = Instant::now();
-        let flush_interval = Duration::from_millis(config.flush_interval_ms);
-
-        while let Ok(command) = receiver.recv() {
-            match command {
-                crate::producer_consumer::LogCommand::Write(data) => {
-                    batch_buffer.extend_from_slice(&data);
-
-                    // 批量写入条件：达到8KB或100ms间隔
-                    if batch_buffer.len() >= config.batch_size || last_flush.elapsed() >= flush_interval {
-                        {
-                            let mut writer_guard = writer.lock();
-                            if let Err(e) = writer_guard.write_batch(&batch_buffer) {
-                                eprintln!("[file] 批量写入失败: {}", e);
-                            }
-                        }
-                        batch_buffer.clear();
-                        last_flush = Instant::now();
-                    }
-
-                    // 检查是否需要轮转
-                    {
-                        let writer_guard = writer.lock();
-                        if writer_guard.current_size >= writer_guard.max_size {
-                            drop(writer_guard);
-                            Self::handle_rotation(&writer, &rotator, &config.file_config);
-                        }
-                    }
-                }
-
-                crate::producer_consumer::LogCommand::Rotate => {
-                    // 先处理缓冲区中的数据
-                    if !batch_buffer.is_empty() {
-                        {
-                            let mut writer_guard = writer.lock();
-                            if let Err(e) = writer_guard.write_batch(&batch_buffer) {
-                                eprintln!("[file] 轮转前批量写入失败: {}", e);
-                            }
-                        }
-                        batch_buffer.clear();
-                    }
-
-                    Self::handle_rotation(&writer, &rotator, &config.file_config);
-                    last_flush = Instant::now();
-                }
-
-                crate::producer_consumer::LogCommand::Compress(path) => {
-                    // 先处理缓冲区中的数据
-                    if !batch_buffer.is_empty() {
-                        {
-                            let mut writer_guard = writer.lock();
-                            if let Err(e) = writer_guard.write_batch(&batch_buffer) {
-                                eprintln!("[file] 压缩前批量写入失败: {}", e);
-                            }
-                        }
-                        batch_buffer.clear();
-                    }
-
-                    Self::handle_compression(path, &config.file_config);
-                    last_flush = Instant::now();
-                }
-
-                crate::producer_consumer::LogCommand::Flush => {
-                    // 写入剩余数据
-                    if !batch_buffer.is_empty() {
-                        {
-                            let mut writer_guard = writer.lock();
-                            if let Err(e) = writer_guard.write_batch(&batch_buffer) {
-                                eprintln!("[file] 刷新时批量写入失败: {}", e);
-                            }
-                        }
-                        batch_buffer.clear();
-                    }
-
-                    {
-                        let mut writer_guard = writer.lock();
-                        if let Err(e) = writer_guard.sync_all() {
-                            eprintln!("[file] 同步失败: {}", e);
-                        }
-                    }
-                    last_flush = Instant::now();
-                }
-
-                crate::producer_consumer::LogCommand::Shutdown => {
-                    // 处理剩余数据并退出
-                    if !batch_buffer.is_empty() {
-                        {
-                            let mut writer_guard = writer.lock();
-                            if let Err(e) = writer_guard.write_batch(&batch_buffer) {
-                                eprintln!("[file] 关闭时批量写入失败: {}", e);
-                            }
-                        }
-                    }
-                    {
-                        let mut writer_guard = writer.lock();
-                        if let Err(e) = writer_guard.sync_all() {
-                            eprintln!("[file] 关闭时同步失败: {}", e);
-                        }
-                    }
-                    break;
-                }
-
-                crate::producer_consumer::LogCommand::HealthCheck(response_sender) => {
-                    // 健康检查：立即响应，表示工作线程正常运行
-                    let _ = response_sender.send(true);
-                }
-            }
-        }
-    }
-
-    /// 处理日志轮转
-    fn handle_rotation(writer: &Arc<Mutex<LogWriter>>, rotator: &Arc<LogRotator>, config: &FileConfig) {
+    
+    
+    
+    
+    /// 执行日志轮转
+    fn perform_rotation(&self) -> Result<(), String> {
         let old_path = {
-            let mut writer_guard = writer.lock();
+            let writer_guard = self.writer.lock();
             writer_guard.current_path.clone()
         };
 
         if !old_path.as_os_str().is_empty() {
             // Flush并关闭当前文件
             {
-                let mut writer_guard = writer.lock();
+                let mut writer_guard = self.writer.lock();
                 if let Some(mut file) = writer_guard.current_file.take() {
                     if let Err(e) = file.flush() {
                         eprintln!("[file] 轮转前刷新失败: {}", e);
@@ -279,7 +127,7 @@ impl FileProcessor {
                 }
             }
 
-            let new_path = rotator.next_path();
+            let new_path = self.rotator.next_path();
             let new_file = OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -294,7 +142,7 @@ impl FileProcessor {
                 });
 
             {
-                let mut writer_guard = writer.lock();
+                let mut writer_guard = self.writer.lock();
                 writer_guard.current_file = Some(BufWriter::new(new_file));
                 writer_guard.current_path = new_path;
                 writer_guard.current_size = 0;
@@ -302,8 +150,8 @@ impl FileProcessor {
 
             // 异步压缩旧文件
             if old_path.exists() {
-                let log_dir = config.log_dir.clone();
-                let max_compressed_files = config.max_compressed_files;
+                let log_dir = self.file_config.log_dir.clone();
+                let max_compressed_files = self.file_config.max_compressed_files;
                 COMPRESSION_POOL.execute(move || {
                     if let Err(e) = Self::compress_file(&old_path, &log_dir, max_compressed_files) {
                         eprintln!("[file] 压缩失败 {}: {}", old_path.display(), e);
@@ -327,19 +175,10 @@ impl FileProcessor {
                 });
             }
 
-            rotator.cleanup_old_files();
+            self.rotator.cleanup_old_files();
         }
-    }
 
-    /// 处理文件压缩
-    fn handle_compression(path: PathBuf, config: &FileConfig) {
-        let log_dir = config.log_dir.clone();
-        let max_compressed_files = config.max_compressed_files;
-        COMPRESSION_POOL.execute(move || {
-            if let Err(e) = Self::compress_file(&path, &log_dir, max_compressed_files) {
-                eprintln!("[file] 压缩失败 {}: {}", path.display(), e);
-            }
-        });
+        Ok(())
     }
 
     /// 压缩文件
@@ -372,45 +211,34 @@ impl LogProcessor for FileProcessor {
     }
 
     fn process(&mut self, data: &[u8]) -> Result<(), String> {
-  
         // 反序列化日志记录
         let record = bincode::decode_from_slice::<Record, _>(data, bincode::config::standard())
             .map_err(|e| format!("反序列化失败: {}", e))?.0;
 
   
         // 根据配置决定是否跳过服务端自身日志
-        if self.config.file_config.skip_server_logs && record.metadata.app_id.is_none() {
+        if self.file_config.skip_server_logs && record.metadata.app_id.is_none() {
             return Ok(());
         }
 
         // 格式化日志记录
         let formatted_data = self.format_record(&record)?;
 
-        // 写入缓冲区
-        let mut buffer_guard = self.buffer.lock();
-        buffer_guard.extend_from_slice(&formatted_data);
+        // 直接写入文件
+        {
+            let mut writer_guard = self.writer.lock();
+            if let Err(e) = writer_guard.write_direct(&formatted_data) {
+                return Err(format!("文件写入失败: {}", e));
+            }
+        }
 
-        // 检查是否需要发送
-        let should_send = buffer_guard.len() >= self.config.batch_size ||
-                          {
-                              let last_flush_guard = self.last_flush.lock();
-                              last_flush_guard.elapsed() >= Duration::from_millis(self.config.flush_interval_ms)
-                          };
-
-
-        if should_send {
-            let data_to_send = buffer_guard.clone();
-            drop(buffer_guard);
-            self.command_sender.send(crate::producer_consumer::LogCommand::Write(data_to_send))
-                .map_err(|e| format!("发送写入命令失败: {}", e))?;
-
-            // 清空缓冲区
-            let mut buffer_guard = self.buffer.lock();
-            buffer_guard.clear();
-
-            // 更新最后刷新时间
-            let mut last_flush_guard = self.last_flush.lock();
-            *last_flush_guard = Instant::now();
+        // 检查是否需要轮转
+        {
+            let writer_guard = self.writer.lock();
+            if writer_guard.current_size >= writer_guard.max_size {
+                drop(writer_guard);
+                self.perform_rotation()?;
+            }
         }
 
         Ok(())
@@ -425,7 +253,7 @@ impl LogProcessor for FileProcessor {
                 .map_err(|e| format!("批量反序列化失败: {}", e))?.0;
 
             // 根据配置决定是否跳过服务端自身日志
-            if self.config.file_config.skip_server_logs && record.metadata.app_id.is_none() {
+            if self.file_config.skip_server_logs && record.metadata.app_id.is_none() {
                 continue;
             }
 
@@ -437,64 +265,51 @@ impl LogProcessor for FileProcessor {
             return Ok(());
         }
 
-        // 批量写入
-        self.command_sender.send(crate::producer_consumer::LogCommand::Write(all_data))
-            .map_err(|e| format!("发送批量写入命令失败: {}", e))?;
+        // 批量写入文件
+        {
+            let mut writer_guard = self.writer.lock();
+            if let Err(e) = writer_guard.write_direct(&all_data) {
+                return Err(format!("批量写入文件失败: {}", e));
+            }
 
-        // 更新最后刷新时间
-        let mut last_flush_guard = self.last_flush.lock();
-        *last_flush_guard = Instant::now();
+            // 检查是否需要轮转
+            if writer_guard.current_size >= writer_guard.max_size {
+                drop(writer_guard);
+                self.perform_rotation()?;
+            }
+        }
 
         Ok(())
     }
 
     fn handle_rotate(&mut self) -> Result<(), String> {
-        self.command_sender.send(crate::producer_consumer::LogCommand::Rotate)
-            .map_err(|e| format!("发送轮转命令失败: {}", e))?;
-        Ok(())
+        self.perform_rotation()
     }
 
     fn handle_compress(&mut self, path: &Path) -> Result<(), String> {
-        self.command_sender.send(crate::producer_consumer::LogCommand::Compress(path.to_path_buf()))
-            .map_err(|e| format!("发送压缩命令失败: {}", e))?;
+        // 直接执行压缩
+        let path = path.to_path_buf();
+        let log_dir = self.file_config.log_dir.clone();
+        let max_compressed_files = self.file_config.max_compressed_files;
+        COMPRESSION_POOL.execute(move || {
+            if let Err(e) = Self::compress_file(&path, &log_dir, max_compressed_files) {
+                eprintln!("[file] 压缩失败 {}: {}", path.display(), e);
+            }
+        });
         Ok(())
     }
 
     fn flush(&mut self) -> Result<(), String> {
-        // 发送缓冲区中的所有数据
-        {
-            let buffer_guard = self.buffer.lock();
-            if !buffer_guard.is_empty() {
-                let data_to_send = buffer_guard.clone();
-                drop(buffer_guard);
-                self.command_sender.send(crate::producer_consumer::LogCommand::Write(data_to_send))
-                    .map_err(|e| format!("发送刷新写入命令失败: {}", e))?;
-            }
+        let mut writer_guard = self.writer.lock();
+        if let Err(e) = writer_guard.sync_all() {
+            return Err(format!("文件同步失败: {}", e));
         }
-
-        // 发送刷新命令
-        self.command_sender.send(crate::producer_consumer::LogCommand::Flush)
-            .map_err(|e| format!("发送刷新命令失败: {}", e))?;
-
-        // 更新最后刷新时间
-        let mut last_flush_guard = self.last_flush.lock();
-        *last_flush_guard = Instant::now();
-
         Ok(())
     }
 
     fn cleanup(&mut self) -> Result<(), String> {
         // 先刷新剩余数据
         self.flush()?;
-
-        // 发送停止命令
-        let _ = self.command_sender.send(crate::producer_consumer::LogCommand::Shutdown);
-
-        // 等待工作线程结束
-        if let Some(thread) = self.writer_thread.take() {
-            let _ = thread.join();
-        }
-
         Ok(())
     }
 }
@@ -507,7 +322,7 @@ impl Drop for FileProcessor {
 }
 
 impl LogWriter {
-    fn new(base_path: &Path, max_size: usize) -> io::Result<Self> {
+    fn new(base_path: &Path, max_size: usize, force_sync: bool) -> io::Result<Self> {
         if let Some(parent) = base_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -525,11 +340,11 @@ impl LogWriter {
             current_size: 0,
             last_flush: Instant::now(),
             flush_interval: Duration::from_millis(100),
-            aggressive_sync: !cfg!(windows), // Windows默认不使用强同步
+            aggressive_sync: force_sync || !cfg!(windows), // 优先使用用户配置
         })
     }
 
-    fn create_default(base_path: &Path, max_size: usize) -> Self {
+    fn create_default(base_path: &Path, max_size: usize, force_sync: bool) -> Self {
         let path = LogRotator::new_path(base_path);
         let file = OpenOptions::new()
             .create(true)
@@ -551,7 +366,7 @@ impl LogWriter {
             current_size: 0,
             last_flush: Instant::now(),
             flush_interval: Duration::from_millis(100),
-            aggressive_sync: !cfg!(windows), // Windows默认不使用强同步
+            aggressive_sync: force_sync || !cfg!(windows), // 优先使用用户配置
         }
     }
 
@@ -565,6 +380,29 @@ impl LogWriter {
             if self.last_flush.elapsed() >= self.flush_interval {
                 file.flush()?;
                 self.last_flush = Instant::now();
+            }
+        }
+        Ok(())
+    }
+
+    /// 直接写入数据（不批量处理）
+    fn write_direct(&mut self, data: &[u8]) -> io::Result<()> {
+        if let Some(file) = &mut self.current_file {
+            file.write_all(data)?;
+            self.current_size += data.len();
+            file.flush()?; // 直接刷新确保数据写入
+
+            // 如果配置为强制同步，则立即同步到磁盘
+            if self.aggressive_sync {
+                #[cfg(windows)]
+                {
+                    // Windows上使用更轻量的同步方式
+                    file.get_mut().sync_data()?;
+                }
+                #[cfg(not(windows))]
+                {
+                    file.get_mut().sync_all()?;
+                }
             }
         }
         Ok(())

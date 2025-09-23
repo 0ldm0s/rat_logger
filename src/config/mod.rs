@@ -217,6 +217,7 @@ pub struct FileConfig {
     pub skip_server_logs: bool,
     pub is_raw: bool,
     pub compress_on_drop: bool, // 是否在Drop时强制压缩
+    pub force_sync: bool,     // 是否强制同步写入磁盘
     pub format: Option<FormatConfig>, // 格式配置
 }
 
@@ -286,6 +287,7 @@ impl Default for FileConfig {
             skip_server_logs: false,
             is_raw: false,
             compress_on_drop: false, // 默认不在Drop时压缩
+            force_sync: false,      // 默认异步写入
             format: None,
         }
     }
