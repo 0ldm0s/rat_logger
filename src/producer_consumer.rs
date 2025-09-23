@@ -223,6 +223,14 @@ impl ProcessorWorker {
                         }
                         last_flush = Instant::now();
                     }
+
+                    // 如果是同步模式（batch_size=1且batch_interval_ms=1），立即处理
+                    if config.batch_size == 1 && config.batch_interval_ms == 1 && !batch_buffer.is_empty() {
+                        if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
+                            eprintln!("[{}] 同步模式处理失败: {}", processor_name, e);
+                        }
+                        last_flush = Instant::now();
+                    }
                 }
                 Ok(LogCommand::WriteForce(data)) => {
                     // 强制写入：立即处理缓冲区中的数据，然后立即处理当前数据

@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let custom_logger = LoggerBuilder::new()
         .with_level(LevelFilter::Trace)
         // .with_dev_mode(true) // 示例启用开发模式，确保日志立即输出
-        .add_terminal()
+        .add_terminal_with_config(rat_logger::handler::term::TermConfig::default())
         .add_file(file_config)
         .build();
 

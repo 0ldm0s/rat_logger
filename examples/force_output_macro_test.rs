@@ -9,6 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 初始化全局日志器 - 异步模式+大批量+大延迟
     LoggerBuilder::new()
         .with_level(LevelFilter::Debug)
+        .with_async_mode(true)             // 启用异步模式
         .with_batch_config(BatchConfig {
             batch_size: 100,              // 需要累积100条日志才输出
             batch_interval_ms: 1000,     // 或者延迟1000ms才输出
@@ -34,6 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     error!("这是强制输出的紧急日志1 - 应该立即输出");
     error!("这是强制输出的紧急日志2 - 应该立即输出");
 
+    // 等待一小段时间确保紧急日志输出完成，防止后续println提前执行
+    std::thread::sleep(std::time::Duration::from_millis(10));
     println!("   已发送紧急日志，应该立即看到输出\n");
 
     // 测试3：混合场景
@@ -43,6 +46,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     error!("紧急日志 C - 强制输出（同时会刷新缓冲区的A和B）");
     info!("普通日志 D - 被缓冲");
 
+    // 等待一小段时间确保紧急日志输出完成，防止后续println提前执行
+    std::thread::sleep(std::time::Duration::from_millis(10));
     println!("   发送混合日志完成，紧急日志应该立即输出并刷新之前的缓冲区\n");
 
     // 测试4：手动刷新功能
