@@ -482,6 +482,131 @@ pub fn max_level() -> LevelFilter {
     }
 }
 
+/// 从环境变量解析日志级别
+pub fn parse_log_level_from_env() -> Option<LevelFilter> {
+    std::env::var("RUST_LOG").ok().and_then(|s| {
+        match s.to_lowercase().as_str() {
+            "error" => Some(LevelFilter::Error),
+            "warn" | "warning" => Some(LevelFilter::Warn),
+            "info" => Some(LevelFilter::Info),
+            "debug" => Some(LevelFilter::Debug),
+            "trace" => Some(LevelFilter::Trace),
+            _ => None, // 无效级别返回None
+        }
+    })
+}
+
+/// 创建基于环境变量的默认日志配置
+fn create_default_logger_from_env() -> Option<LoggerCore> {
+    let level = parse_log_level_from_env()?;
+
+    // 基于macro_format_example.rs的默认配置
+    let format_config = crate::config::FormatConfig {
+        timestamp_format: "%H:%M:%S".to_string(),
+        level_style: crate::config::LevelStyle {
+            error: "E".to_string(),
+            warn: "W".to_string(),
+            info: "I".to_string(),
+            debug: "D".to_string(),
+            trace: "T".to_string(),
+        },
+        format_template: "{level} {timestamp} {message}".to_string(),
+    };
+
+    let color_config = crate::config::ColorConfig {
+        error: "\x1b[91m".to_string(),      // 亮红色
+        warn: "\x1b[93m".to_string(),       // 亮黄色
+        info: "\x1b[92m".to_string(),       // 亮绿色
+        debug: "\x1b[96m".to_string(),      // 亮青色
+        trace: "\x1b[95m".to_string(),      // 亮紫色
+        timestamp: "\x1b[90m".to_string(),   // 深灰色
+        target: "\x1b[94m".to_string(),      // 亮蓝色
+        file: "\x1b[95m".to_string(),       // 亮紫色
+        message: "\x1b[97m".to_string(),      // 亮白色
+    };
+
+    let term_config = crate::handler::term::TermConfig {
+        format: Some(format_config),
+        color: Some(color_config),
+        ..Default::default()
+    };
+
+    let batch_config = crate::producer_consumer::BatchConfig {
+        batch_size: 1,
+        batch_interval_ms: 1,
+        buffer_size: 1024,
+    };
+
+    let mut processor_manager = crate::producer_consumer::ProcessorManager::new();
+    if let Err(e) = processor_manager.add_processor(
+        crate::handler::term::TermProcessor::with_config(term_config),
+        batch_config.clone()
+    ) {
+        eprintln!("创建默认日志器失败: {}", e);
+        return None;
+    }
+
+    let mut expected_types = std::collections::HashSet::new();
+    expected_types.insert(processor_types::TERMINAL.to_string());
+
+    Some(LoggerCore::with_expected_types(
+        level,
+        processor_manager,
+        batch_config,
+        false, // 同步模式
+        expected_types
+    ))
+}
+
+/// 尝试从环境变量初始化全局日志器
+/// 遵循规则：
+/// 1. 如果已经初始化则直接返回
+/// 2. 如果没有RUST_LOG环境变量则不做任何事
+/// 3. 如果有RUST_LOG则使用默认配置初始化同步日志器
+pub fn try_init_from_env() -> Result<(), SetLoggerError> {
+    // 检查是否已经初始化
+    {
+        let guard = LOGGER.lock().unwrap();
+        if guard.is_some() {
+            return Ok(()); // 已经初始化，直接返回
+        }
+    }
+
+    // 尝试从环境变量创建默认日志器
+    if let Some(logger) = create_default_logger_from_env() {
+        let logger = Arc::new(logger);
+
+        // 初始化全局日志器
+        let _lock = LOGGER_LOCK.write().unwrap();
+        let mut guard = LOGGER.lock().unwrap();
+
+        // 双重检查，防止并发初始化
+        if guard.is_some() {
+            return Ok(());
+        }
+
+        *guard = Some(logger);
+
+        // 等待工作线程就绪
+        if let Some(logger) = guard.as_ref() {
+            let logger_ptr = logger.as_ref() as *const dyn Logger;
+            let logger_core_ptr = logger_ptr as *const LoggerCore;
+
+            if !logger_ptr.is_null() && !logger_core_ptr.is_null() {
+                let logger_core = unsafe { &*logger_core_ptr };
+                if let Err(e) = logger_core.wait_for_workers_ready(5000) {
+                    eprintln!("⚠️ 环境变量初始化日志器警告: 工作线程启动失败: {}", e);
+                }
+            }
+        }
+
+        set_max_level(parse_log_level_from_env().unwrap_or(LevelFilter::Info));
+        Ok(())
+    } else {
+        Ok(()) // 没有RUST_LOG环境变量，不做任何事
+    }
+}
+
 /// 日志器设置错误
 #[derive(Debug)]
 pub struct SetLoggerError(());

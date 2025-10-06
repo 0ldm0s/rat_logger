@@ -14,7 +14,7 @@ use config::{Record, Metadata, AppId};
 use std::any::Any;
 
 // 重新导出主要类型
-pub use core::{Logger, LoggerBuilder};
+pub use core::{Logger, LoggerBuilder, parse_log_level_from_env, try_init_from_env};
 pub use handler::{composite::CompositeHandler, term::TermProcessor, file::FileProcessor, udp::UdpProcessor};
 pub use config::{Level, LevelFilter, FileConfig, NetworkConfig, FormatConfig, LevelStyle, ColorConfig};
 
@@ -146,6 +146,9 @@ pub fn __private_log_impl(
     file: &'static str,
     line: u32,
 ) {
+    // 首先尝试从环境变量初始化（如果还未初始化且存在RUST_LOG）
+    let _ = core::try_init_from_env();
+
     // 检查全局日志器的配置
     if let Some(logger) = core::LOGGER.lock().unwrap().as_ref() {
         let record = Record {

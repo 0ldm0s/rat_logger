@@ -28,6 +28,20 @@ rat_loggerは、Rustで書かれた高性能でスレッドセーフなロギン
 
 ## クイックスタート
 
+### 環境変数設定（最も簡単）
+
+`RUST_LOG`環境変数による自動ログレベル設定をサポートし、コード初期化は不要です：
+
+```bash
+# ログレベルを設定
+export RUST_LOG=info  # オプション: error, warn, info, debug, trace
+
+# その後、ロギングマクロを直接使用
+cargo run your_app.rs
+```
+
+詳細な使用方法については、`examples/env_log_example.rs`例を参照してください。
+
 ### ロギングマクロの使用（推奨）
 
 ```rust
@@ -637,7 +651,7 @@ rat_loggerは包括的なエラーハンドリングメカニズムを提供：
 
 ```toml
 [dependencies]
-rat_logger = "0.2.0"
+rat_logger = "0.2.9"
 ```
 
 ## ライセンス
@@ -656,6 +670,7 @@ rat_loggerを改善するためにIssueとPull Requestの提出を歓迎しま�
 
 プロジェクトには完全なサンプルコードが含まれています：
 
+- `examples/env_log_example.rs` - 環境変数RUST_LOG設定例、最も簡単な使用方法
 - `examples/basic_usage.rs` - 基本的な使用例、複数の出力方法を表示
 - `examples/composite_handler.rs` - 複数出力プロセッサの例、ターミナル+ファイル同時出力
 - `examples/file_rotation.rs` - ファイルローテーションと圧縮機能テスト

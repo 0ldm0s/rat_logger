@@ -28,6 +28,20 @@ rat_logger 是一个用 Rust 编写的高性能、线程安全的日志库，采
 
 ## 快速开始
 
+### 环境变量配置（最简单）
+
+支持通过 `RUST_LOG` 环境变量自动配置日志级别，无需任何代码初始化：
+
+```bash
+# 设置日志级别
+export RUST_LOG=info  # 可选值: error, warn, info, debug, trace
+
+# 然后直接使用日志宏
+cargo run your_app.rs
+```
+
+详细使用方法请参考 `examples/env_log_example.rs` 示例。
+
 ### 使用日志宏（推荐）
 
 ```rust
@@ -635,7 +649,7 @@ rat_logger 提供了完善的错误处理机制：
 
 ```toml
 [dependencies]
-rat_logger = "0.2.0"
+rat_logger = "0.2.9"
 ```
 
 ## 许可证
@@ -654,6 +668,7 @@ rat_logger = "0.2.0"
 
 项目包含完整的示例代码：
 
+- `examples/env_log_example.rs` - 环境变量RUST_LOG配置示例，最简单的使用方式
 - `examples/basic_usage.rs` - 基础使用示例，展示多种输出方式
 - `examples/composite_handler.rs` - 多输出处理器示例，终端+文件同时输出
 - `examples/file_rotation.rs` - 文件轮转和压缩功能测试

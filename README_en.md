@@ -28,6 +28,20 @@ rat_logger is a high-performance, thread-safe logging library written in Rust, f
 
 ## Quick Start
 
+### Environment Variable Configuration (Easiest)
+
+Supports automatic log level configuration through `RUST_LOG` environment variable, no code initialization required:
+
+```bash
+# Set log level
+export RUST_LOG=info  # Options: error, warn, info, debug, trace
+
+# Then use logging macros directly
+cargo run your_app.rs
+```
+
+For detailed usage, please refer to the `examples/env_log_example.rs` example.
+
 ### Using Logging Macros (Recommended)
 
 ```rust
@@ -637,7 +651,7 @@ rat_logger provides comprehensive error handling mechanisms:
 
 ```toml
 [dependencies]
-rat_logger = "0.2.0"
+rat_logger = "0.2.9"
 ```
 
 ## License
@@ -656,6 +670,7 @@ Detailed version update records please see [CHANGELOG.md](CHANGELOG.md).
 
 The project includes complete example code:
 
+- `examples/env_log_example.rs` - Environment variable RUST_LOG configuration example, the easiest way to use
 - `examples/basic_usage.rs` - Basic usage example, showing multiple output methods
 - `examples/composite_handler.rs` - Multiple output processor example, terminal+file simultaneous output
 - `examples/file_rotation.rs` - File rotation and compression function test
