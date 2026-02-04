@@ -246,8 +246,11 @@ pub fn format_with_config(buf: &mut dyn Write, record: &Record, format_config: &
         Level::Trace => &format_config.level_style.trace,
     };
 
+    // 获取模板（支持级别专用模板和继承）
+    let template = get_level_template(record.metadata.level, format_config);
+
     // 使用格式模板
-    let formatted = format_config.format_template
+    let formatted = template
         .replace("{timestamp}", &timestamp.to_string())
         .replace("{level}", level_text)
         .replace("{target}", &record.metadata.target)
@@ -256,6 +259,29 @@ pub fn format_with_config(buf: &mut dyn Write, record: &Record, format_config: &
         .replace("{message}", &record.args);
 
     writeln!(buf, "{}", formatted)
+}
+
+/// 根据级别获取模板（支持继承，模板设为 "+" 则继承通用模板）
+fn get_level_template(level: Level, format_config: &FormatConfig) -> String {
+    let default_tpl = &format_config.format_template;
+
+    if let Some(ref templates) = format_config.level_templates {
+        let tpl = match level {
+            Level::Error => templates.error.as_deref(),
+            Level::Warn => templates.warn.as_deref(),
+            Level::Info => templates.info.as_deref(),
+            Level::Debug => templates.debug.as_deref(),
+            Level::Trace => templates.trace.as_deref(),
+        };
+
+        // 如果模板为空或为 "+"，使用通用模板
+        match tpl {
+            Some("+") | None => default_tpl.clone(),
+            Some(t) => t.to_string(),
+        }
+    } else {
+        default_tpl.clone()
+    }
 }
 
 /// 带颜色的格式化函数
@@ -286,6 +312,9 @@ pub fn format_with_color(buf: &mut dyn Write, record: &Record, format_config: &F
     // 重置颜色
     let reset_color = "\x1b[0m";
 
+    // 获取模板（支持级别专用模板和继承）
+    let template = get_level_template(record.metadata.level, format_config);
+
     // 使用格式模板并应用颜色
     let colored_timestamp = format!("{}{}{}", color_config.timestamp, timestamp, reset_color);
     let colored_level = format!("{}{}{}", level_color, level_text, reset_color);
@@ -295,7 +324,7 @@ pub fn format_with_color(buf: &mut dyn Write, record: &Record, format_config: &F
     let colored_message = format!("{}{}{}", color_config.message, record.args, reset_color);
 
     // 使用格式模板进行格式化
-    let mut formatted = format_config.format_template
+    let mut formatted = template
         .replace("{timestamp}", &colored_timestamp)
         .replace("{level}", &colored_level)
         .replace("{target}", &colored_target)

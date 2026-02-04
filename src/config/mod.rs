@@ -300,8 +300,37 @@ pub struct FormatConfig {
     pub timestamp_format: String,
     /// 日志级别显示样式
     pub level_style: LevelStyle,
-    /// 输出格式模板
+    /// 通用输出模板
     pub format_template: String,
+    /// 各级别专用模板（为空时使用通用模板）
+    pub level_templates: Option<LevelTemplates>,
+}
+
+/// 各级别专用模板
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LevelTemplates {
+    /// ERROR 级别模板（支持继承，设为 "+" 则继承通用模板）
+    pub error: Option<String>,
+    /// WARN 级别模板
+    pub warn: Option<String>,
+    /// INFO 级别模板
+    pub info: Option<String>,
+    /// DEBUG 级别模板（支持继承，设为 "+" 则继承通用模板）
+    pub debug: Option<String>,
+    /// TRACE 级别模板（支持继承，设为 "+" 则继承通用模板）
+    pub trace: Option<String>,
+}
+
+impl Default for LevelTemplates {
+    fn default() -> Self {
+        Self {
+            error: None,
+            warn: None,
+            info: None,
+            debug: None,
+            trace: None,
+        }
+    }
 }
 
 /// 日志级别样式配置
@@ -368,6 +397,7 @@ impl Default for FormatConfig {
             timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
             level_style: LevelStyle::default(),
             format_template: "{timestamp} [{level}] {target}:{line} - {message}".to_string(),
+            level_templates: None,
         }
     }
 }

@@ -511,6 +511,7 @@ fn create_default_logger_from_env() -> Option<LoggerCore> {
             trace: "T".to_string(),
         },
         format_template: "{level} {timestamp} {message}".to_string(),
+        level_templates: None,
     };
 
     let color_config = crate::config::ColorConfig {

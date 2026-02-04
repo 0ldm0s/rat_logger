@@ -421,7 +421,16 @@ rat_logger 支持标准的日志级别（从低到高）：
 pub struct FormatConfig {
     pub timestamp_format: String,    // 时间戳格式
     pub level_style: LevelStyle,     // 日志级别样式
-    pub format_template: String,     // 格式模板
+    pub format_template: String,     // 格式模板（通用模板）
+    pub level_templates: Option<LevelTemplates>, // 各级别专用模板
+}
+
+pub struct LevelTemplates {
+    pub error: Option<String>,  // ERROR 级别模板
+    pub warn: Option<String>,   // WARN 级别模板
+    pub info: Option<String>,    // INFO 级别模板
+    pub debug: Option<String>,   // DEBUG 级别模板
+    pub trace: Option<String>,   // TRACE 级别模板
 }
 
 pub struct LevelStyle {
@@ -432,6 +441,39 @@ pub struct LevelStyle {
     pub trace: String,  // 跟踪级别显示
 }
 ```
+
+#### 各级别模板与继承机制
+
+通过 `level_templates` 可以为每个日志级别配置独立模板，模板设为 `"+"` 则继承通用模板：
+
+```rust
+let format_config = FormatConfig {
+    timestamp_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
+    level_style: LevelStyle::default(),
+    // 通用模板（用于 DEBUG/ERROR/TRACE）
+    format_template: "{timestamp} [{level}] {target}:{line} - {message}".to_string(),
+    // INFO/WARN 用简洁模板，DEBUG/ERROR/TRACE 用 "+" 继承通用模板
+    level_templates: Some(LevelTemplates {
+        info: Some("{timestamp} [{level}] {message}".to_string()),  // 简洁模板
+        warn: Some("{timestamp} [{level}] {message}".to_string()),  // 简洁模板
+        debug: Some("+".to_string()),  // 继承通用模板
+        error: Some("+".to_string()),  // 继承通用模板
+        trace: Some("+".to_string()),  // 继承通用模板
+    }),
+};
+```
+
+**模板变量说明：**
+- `{timestamp}` - 时间戳
+- `{level}` - 日志级别（如 INFO、DEBUG）
+- `{target}` - 模块路径（如 `rat_engine2::server::http::router`）
+- `{file}` - 文件名
+- `{line}` - 行号
+- `{message}` - 日志消息
+
+**效果示例：**
+- DEBUG/ERROR/TRACE: `2026-02-04 21:40:30 [INFO] rat_engine2::server::http::router:785 - 消息内容`
+- INFO/WARN: `2026-02-04 21:40:30 [INFO] 消息内容`
 
 ### 颜色配置 (ColorConfig)
 
