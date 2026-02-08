@@ -146,6 +146,12 @@ pub fn __private_log_impl(
     file: &'static str,
     line: u32,
 ) {
+    // 快速路径：首先检查级别，避免被过滤的日志产生任何开销
+    let max_level = core::max_level();
+    if !level.should_log_at(max_level) {
+        return;
+    }
+
     // 首先尝试从环境变量初始化（如果还未初始化且存在RUST_LOG）
     let _ = core::try_init_from_env();
 
