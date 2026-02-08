@@ -207,133 +207,129 @@ impl ProcessorWorker {
         let mut last_flush = Instant::now();
         let flush_interval = Duration::from_millis(config.batch_interval_ms);
 
-        // 自适应退避：空闲时逐步增加超时时间
-        let mut idle_timeout_ms = config.batch_interval_ms.min(50);
-        const MAX_IDLE_TIMEOUT_MS: u64 = 500; // 最大空闲超时 500ms
-
+        // 核心优化：缓冲区为空时永久阻塞（0% CPU），有数据时用短超时保证及时刷新
         loop {
-            // 根据是否为空闲状态动态调整超时
-            let current_timeout_ms = if batch_buffer.is_empty() {
-                idle_timeout_ms
+            if batch_buffer.is_empty() {
+                // 空闲状态：永久阻塞，完全不消耗 CPU
+                match receiver.recv() {
+                    Ok(cmd) => {
+                        match cmd {
+                            LogCommand::Write(data) => {
+                                batch_buffer.push(data);
+                                // 检查是否需要批量刷新
+                                if batch_buffer.len() >= config.batch_size ||
+                                   last_flush.elapsed() >= flush_interval {
+                                    let _ = Self::process_batch(&mut processor, &mut batch_buffer);
+                                    last_flush = Instant::now();
+                                }
+                            }
+                            LogCommand::WriteForce(data) => {
+                                if !batch_buffer.is_empty() {
+                                    let _ = Self::process_batch(&mut processor, &mut batch_buffer);
+                                }
+                                let _ = processor.process(&data);
+                                let _ = processor.flush();
+                                last_flush = Instant::now();
+                            }
+                            LogCommand::Rotate => {
+                                if !batch_buffer.is_empty() {
+                                    let _ = Self::process_batch(&mut processor, &mut batch_buffer);
+                                }
+                                let _ = processor.handle_rotate();
+                                last_flush = Instant::now();
+                            }
+                            LogCommand::Compress(path) => {
+                                if !batch_buffer.is_empty() {
+                                    let _ = Self::process_batch(&mut processor, &mut batch_buffer);
+                                }
+                                let _ = processor.handle_compress(&path);
+                                last_flush = Instant::now();
+                            }
+                            LogCommand::Flush => {
+                                if !batch_buffer.is_empty() {
+                                    let _ = Self::process_batch(&mut processor, &mut batch_buffer);
+                                }
+                                let _ = processor.flush();
+                                last_flush = Instant::now();
+                            }
+                            LogCommand::Shutdown(_) => {
+                                if !batch_buffer.is_empty() {
+                                    let _ = Self::process_batch(&mut processor, &mut batch_buffer);
+                                }
+                                let _ = processor.flush();
+                                let _ = processor.cleanup();
+                                std::process::exit(0);
+                            }
+                            LogCommand::HealthCheck(tx) => {
+                                let _ = tx.send(true);
+                            }
+                        }
+                    }
+                    Err(crossbeam_channel::RecvError) => break,
+                }
             } else {
-                config.batch_interval_ms
-            };
-
-            let timeout = Duration::from_millis(current_timeout_ms);
-            let command = receiver.recv_timeout(timeout);
-
-            match command {
-                Ok(LogCommand::Write(data)) => {
-                    // 有数据到来，重置空闲超时
-                    idle_timeout_ms = config.batch_interval_ms.min(50);
-
-                    batch_buffer.push(data);
-
-                    // 批量写入条件：达到batch_size或时间间隔
-                    if batch_buffer.len() >= config.batch_size ||
-                       last_flush.elapsed() >= flush_interval {
-                        let _ = Self::process_batch(&mut processor, &mut batch_buffer);
-                        last_flush = Instant::now();
-                    }
-
-                    // 如果是同步模式（batch_size=1且batch_interval_ms=1），立即处理
-                    if config.batch_size == 1 && config.batch_interval_ms == 1 && !batch_buffer.is_empty() {
-                        let _ = Self::process_batch(&mut processor, &mut batch_buffer);
-                        last_flush = Instant::now();
-                    }
-                }
-                Ok(LogCommand::WriteForce(data)) => {
-                    // 有数据到来，重置空闲超时
-                    idle_timeout_ms = config.batch_interval_ms.min(50);
-
-                    // 强制写入：立即处理缓冲区中的数据，然后立即处理当前数据
-                    if !batch_buffer.is_empty() {
-                        let _ = Self::process_batch(&mut processor, &mut batch_buffer);
-                        batch_buffer.clear();
-                    }
-
-                    // 立即处理当前数据
-                    let _ = processor.process(&data);
-
-                    // 立即刷新
-                    let _ = processor.flush();
-                    last_flush = Instant::now();
-                }
-                Ok(LogCommand::Rotate) => {
-                    // 处理轮转命令前先处理缓冲区
-                    if !batch_buffer.is_empty() {
-                        if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
-                            eprintln!("[{}] 轮转前批量处理失败: {}", processor_name, e);
-                        }
-                        last_flush = Instant::now();
-                    }
-
-                    // 处理轮转命令（只有文件处理器会真正处理）
-                    if let Err(e) = processor.handle_rotate() {
-                        eprintln!("[{}] 处理轮转失败: {}", processor_name, e);
-                    }
-                }
-
-                Ok(LogCommand::Compress(path)) => {
-                    if !batch_buffer.is_empty() {
-                        if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
-                            eprintln!("[{}] 压缩前批量处理失败: {}", processor_name, e);
-                        }
-                        last_flush = Instant::now();
-                    }
-
-                    if let Err(e) = processor.handle_compress(&path) {
-                        eprintln!("[{}] 处理压缩失败: {}", processor_name, e);
-                    }
-                }
-
-                Ok(LogCommand::Flush) => {
-                    if !batch_buffer.is_empty() {
-                        if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
-                            eprintln!("[{}] 刷新时批量处理失败: {}", processor_name, e);
-                        }
-                        batch_buffer.clear();
-                    }
-
-                    if let Err(e) = processor.flush() {
-                        eprintln!("[{}] 处理器刷新失败: {}", processor_name, e);
-                    }
-                    last_flush = Instant::now();
-                }
-
-                Ok(LogCommand::Shutdown(source)) => {
-                    if !batch_buffer.is_empty() {
-                        if let Err(e) = Self::process_batch(&mut processor, &mut batch_buffer) {
-                            eprintln!("[{}] 关闭时批量处理失败: {}", processor_name, e);
+                // 有数据待处理：用短超时确保及时刷新
+                match receiver.recv_timeout(Duration::from_millis(config.batch_interval_ms)) {
+                    Ok(cmd) => {
+                        match cmd {
+                            LogCommand::Write(data) => {
+                                batch_buffer.push(data);
+                                if batch_buffer.len() >= config.batch_size ||
+                                   last_flush.elapsed() >= flush_interval {
+                                    let _ = Self::process_batch(&mut processor, &mut batch_buffer);
+                                    last_flush = Instant::now();
+                                }
+                            }
+                            LogCommand::WriteForce(data) => {
+                                if !batch_buffer.is_empty() {
+                                    let _ = Self::process_batch(&mut processor, &mut batch_buffer);
+                                }
+                                let _ = processor.process(&data);
+                                let _ = processor.flush();
+                                last_flush = Instant::now();
+                            }
+                            LogCommand::Rotate => {
+                                if !batch_buffer.is_empty() {
+                                    let _ = Self::process_batch(&mut processor, &mut batch_buffer);
+                                }
+                                let _ = processor.handle_rotate();
+                                last_flush = Instant::now();
+                            }
+                            LogCommand::Compress(path) => {
+                                if !batch_buffer.is_empty() {
+                                    let _ = Self::process_batch(&mut processor, &mut batch_buffer);
+                                }
+                                let _ = processor.handle_compress(&path);
+                                last_flush = Instant::now();
+                            }
+                            LogCommand::Flush => {
+                                if !batch_buffer.is_empty() {
+                                    let _ = Self::process_batch(&mut processor, &mut batch_buffer);
+                                }
+                                let _ = processor.flush();
+                                last_flush = Instant::now();
+                            }
+                            LogCommand::Shutdown(_) => {
+                                if !batch_buffer.is_empty() {
+                                    let _ = Self::process_batch(&mut processor, &mut batch_buffer);
+                                }
+                                let _ = processor.flush();
+                                let _ = processor.cleanup();
+                                std::process::exit(0);
+                            }
+                            LogCommand::HealthCheck(tx) => {
+                                let _ = tx.send(true);
+                            }
                         }
                     }
-
-                    if let Err(e) = processor.flush() {
-                        eprintln!("[{}] 关闭时处理器刷新失败: {}", processor_name, e);
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                        // 超时：检查刷新
+                        if last_flush.elapsed() >= flush_interval {
+                            let _ = Self::process_batch(&mut processor, &mut batch_buffer);
+                            last_flush = Instant::now();
+                        }
                     }
-                    if let Err(e) = processor.cleanup() {
-                        eprintln!("[{}] 处理器清理失败: {}", processor_name, e);
-                    }
-                    break;
-                }
-
-                Ok(LogCommand::HealthCheck(response_sender)) => {
-                    let _ = response_sender.send(true);
-                }
-                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                    // 超时：检查是否需要刷新缓冲区
-                    if !batch_buffer.is_empty() && last_flush.elapsed() >= flush_interval {
-                        let _ = Self::process_batch(&mut processor, &mut batch_buffer);
-                        last_flush = Instant::now();
-                    }
-
-                    // 空闲状态下逐步增加超时（指数退避到上限）
-                    if batch_buffer.is_empty() {
-                        idle_timeout_ms = (idle_timeout_ms * 2).min(MAX_IDLE_TIMEOUT_MS);
-                    }
-                }
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                    break;
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
                 }
             }
         }

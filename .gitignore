@@ -1,5 +1,10 @@
 /target
+/not_git
 *_logs
 /.claude
 *.bak
 *.log
+*.md
+!README.md
+!README_en.md
+!README_ja.md
