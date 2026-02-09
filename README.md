@@ -28,7 +28,31 @@ rat_logger 是一个用 Rust 编写的高性能、线程安全的日志库，采
 
 ## 快速开始
 
-### 环境变量配置（最简单）
+### 快速初始化（最简单）
+
+提供类似 `tracing_subscriber` 的简洁 API：
+
+```rust
+use rat_logger::{error, info};
+
+fn main() {
+    // 一行代码完成初始化，使用默认配置
+    rat_logger::fmt().init();
+
+    info!("应用启动成功");
+    error!("发生错误");
+}
+```
+
+自定义日志级别：
+
+```rust
+rat_logger::fmt()
+    .with_max_level(rat_logger::LevelFilter::Debug)
+    .init();
+```
+
+### 环境变量配置
 
 支持通过 `RUST_LOG` 环境变量自动配置日志级别，无需任何代码初始化：
 
@@ -42,7 +66,7 @@ cargo run your_app.rs
 
 详细使用方法请参考 `examples/env_log_example.rs` 示例。
 
-### 使用日志宏（推荐）
+### 使用日志宏（完整配置）
 
 ```rust
 use rat_logger::{LoggerBuilder, LevelFilter, error, warn, info, debug, trace};
@@ -691,7 +715,7 @@ rat_logger 提供了完善的错误处理机制：
 
 ```toml
 [dependencies]
-rat_logger = "0.2.9"
+rat_logger = "0.3.1"
 ```
 
 ## 许可证
@@ -710,6 +734,7 @@ rat_logger = "0.2.9"
 
 项目包含完整的示例代码：
 
+- `examples/fmt_quick_init.rs` - 快速初始化示例，类似 tracing_subscriber::fmt().init()
 - `examples/env_log_example.rs` - 环境变量RUST_LOG配置示例，最简单的使用方式
 - `examples/basic_usage.rs` - 基础使用示例，展示多种输出方式
 - `examples/composite_handler.rs` - 多输出处理器示例，终端+文件同时输出
