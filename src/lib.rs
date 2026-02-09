@@ -18,6 +18,9 @@ pub use core::{Logger, LoggerBuilder, parse_log_level_from_env, try_init_from_en
 pub use handler::{composite::CompositeHandler, term::TermProcessor, file::FileProcessor, udp::UdpProcessor};
 pub use config::{Level, LevelFilter, FileConfig, NetworkConfig, FormatConfig, LevelStyle, LevelTemplates, ColorConfig};
 
+mod fmt_impl;
+pub use fmt_impl::{fmt, FmtInitializer};
+
 // 日志宏
 #[macro_export]
 macro_rules! error {
