@@ -31,6 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             trace: "T".to_string(),
         },
         format_template: "{level} {timestamp} {message}".to_string(),
+        level_templates: None,
     };
 
     // 2. 创建详细格式配置
@@ -45,6 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             trace: "TRACE".to_string(),
         },
         format_template: "[{level}] {timestamp} {target}:{line} - {message}".to_string(),
+        level_templates: None,
     };
 
     // 3. 创建颜色配置

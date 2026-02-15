@@ -86,6 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             trace: "trace".to_string(),
         },
         format_template: "{{\"timestamp\":\"{timestamp}\",\"level\":\"{level}\",\"target\":\"{target}\",\"message\":\"{message}\"}}".to_string(),
+        level_templates: None,
     };
 
     // 2.2 简洁风格格式
@@ -99,6 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             trace: "TRC".to_string(),
         },
         format_template: "{timestamp} [{level}] {message}".to_string(),
+        level_templates: None,
     };
 
     // 2.3 详细风格格式
@@ -112,6 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             trace: "TRACE".to_string(),
         },
         format_template: "[{timestamp}] {level} | {target} | {file}:{line} | {message}".to_string(),
+        level_templates: None,
     };
 
     // 2.4 自定义分隔符格式
@@ -125,6 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             trace: "⚪ TRACE".to_string(),
         },
         format_template: "┌─ {timestamp}\n├─ {level}\n├─ {target}\n├─ {file}:{line}\n└─ {message}".to_string(),
+        level_templates: None,
     };
 
     println!("   ✓ 已创建4种格式配置\n");
