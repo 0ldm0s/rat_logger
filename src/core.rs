@@ -482,6 +482,24 @@ pub fn max_level() -> LevelFilter {
     }
 }
 
+/// 检查全局日志器是否已经初始化
+///
+/// # 示例
+///
+/// ```rust
+/// use rat_logger;
+///
+/// if rat_logger::is_initialized() {
+///     println!("日志器已经初始化");
+/// } else {
+///     println!("日志器未初始化");
+/// }
+/// ```
+pub fn is_initialized() -> bool {
+    let guard = LOGGER.lock().unwrap();
+    guard.is_some()
+}
+
 /// 从环境变量解析日志级别
 pub fn parse_log_level_from_env() -> Option<LevelFilter> {
     std::env::var("RUST_LOG").ok().and_then(|s| {

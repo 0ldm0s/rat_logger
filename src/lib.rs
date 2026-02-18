@@ -14,7 +14,7 @@ use config::{Record, Metadata, AppId};
 use std::any::Any;
 
 // 重新导出主要类型
-pub use core::{Logger, LoggerBuilder, parse_log_level_from_env, try_init_from_env};
+pub use core::{Logger, LoggerBuilder, parse_log_level_from_env, try_init_from_env, is_initialized};
 pub use handler::{composite::CompositeHandler, term::TermProcessor, file::FileProcessor, udp::UdpProcessor};
 pub use config::{Level, LevelFilter, FileConfig, NetworkConfig, FormatConfig, LevelStyle, LevelTemplates, ColorConfig};
 
