@@ -1,6 +1,6 @@
 [package]
 name = "rat_logger"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 authors = ["0ldm0s <oldmos@gmail.com>"]
 description = "具有生产者消费者架构、异步文件操作和分层配置系统的高性能日志库"
