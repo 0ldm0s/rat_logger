@@ -8,6 +8,7 @@
 !README.md
 !README_en.md
 !README_ja.md
+!.skill/**/*.md
 
 # Cargo lock文件
 Cargo.lock
